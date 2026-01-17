@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "LittleFS.h"       // for using littleFS file system on esp32
 #include "WiFi.h"  
+#include "WebServer.h"
 #include "HTTPClient.h"
 #include "time.h"           //for connecting to NTP server
 #include "Wire.h"           // for I2C
@@ -55,6 +56,7 @@ QueueHandle_t responseQueue;
 const char* wifi_ssid = "punya orang";
 const char* wifi_password = "b57aigqs";
 const char* web_server = "";
+WebServer webServer(80);
 HTTPClient http;
 
 // NTP related variables
@@ -90,6 +92,22 @@ void InitWifi()
   Serial.println("Connected to : " + String(wifi_ssid));
   delay(1000);
 }
+
+
+
+// WebServer related functions
+void InitWebServer()
+{
+  webServer.on("/", HTTP_GET, []() {
+    File mainPageFile = LittleFS.open("/index.html", "r");
+    webServer.streamFile(mainPageFile, "text/html");
+    mainPageFile.close();
+  });
+  webServer.begin();
+  Serial.println("IP Address : " + WiFi.localIP().toString());
+  delay(1000);
+}
+
 
 
 // LittleFS related functions
@@ -129,7 +147,7 @@ void StoreSchedule()
   */
   bool isSucceed = false;
   String websiteResponse = "{}";
-  StaticJsonDocument<256> scheduleDoc;
+  JsonDocument scheduleDoc;
   http.begin(web_server);
 
   while (!isSucceed)
@@ -159,6 +177,7 @@ void StoreSchedule()
 }
 
 
+
 // NTP related functions
 void InitNTP()
 {
@@ -180,6 +199,7 @@ void InitNTP()
   );
   delay(1000);
 }
+
 
 
 // RS3231 related functions
@@ -222,6 +242,7 @@ void InitRTC()
 }
 
 
+
 // Device related functions
 void TurnOnDevice()
 {
@@ -234,6 +255,7 @@ void TurnOffDevice()
   isDeviceActive = false;
   digitalWrite(16, LOW);
 } 
+
 
 
 // State manager
@@ -380,6 +402,7 @@ void setup()
   InitLittleFS();
   InitNTP();
   InitRTC();
+  InitWebServer();
 
   requestQueue = xQueueCreate(1, sizeof(request_format));
   if (requestQueue == NULL)
@@ -415,5 +438,6 @@ void setup()
 
 void loop() 
 { 
+  webServer.handleClient(); // begin() only open socket. this handle request
 }
 
