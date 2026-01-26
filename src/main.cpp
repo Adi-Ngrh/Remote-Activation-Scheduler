@@ -150,9 +150,11 @@ void ReceiveSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
 
 void InitWebServer()
 {
+  // GET / : send website page to client
   webServer.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send(LittleFS, "/index.html", "text/html");
   });
+  // POST /upload : receive data from website and store it inside schedule.txt
   webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveSchedule); // onRequest run after data fully transferred, onUpload and onBody run during transfer
   webServer.begin();
   Serial.println("IP Address : " + WiFi.localIP().toString());
