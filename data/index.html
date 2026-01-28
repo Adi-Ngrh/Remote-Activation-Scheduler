@@ -25,8 +25,8 @@
             <div id="schedule_panel_template" data-mode="" data-date="" data-startTime="" data-duration="" data-interval="" style="display:none; border:1px solid rgb(80,80,80); background: rgb(10,10,10); padding:10px; margin-bottom:10px;">  
                 <div style="margin-bottom:6px;">Mode: <b class="Mode"></b></div>
                 <div style="margin-bottom:6px;">Date: <b class="Date"></b></div>
-                <div style="margin-bottom:6px;">Start: <b class="StartTime"></b></div>
-                <div style="margin-bottom:8px;">Duration: <b class="Duration"></b></div>
+                <div style="margin-bottom:6px;">Time: <b class="Time"></b></div>
+                <div id="duration_placeholder" style="display:block; margin-bottom:8px;">Duration: <b class="Duration"></b></div>
                 <div id="interval_placeholder" style="display:none; margin-bottom:8px;">Interval: <b class="Interval"></b></div>
 
                 <!-- Confirmation panel -->
@@ -68,13 +68,13 @@
                         <option value="2">Always Active</option>
                     </select>
 
-                    <!-- Date -->
+                    <!-- Start Date -->
                     <div style="margin-top:20px; margin-bottom:5px;">Date</div>
                     <input id="input_date" type="date" required="true" style="width:90%; padding:8px;">
 
                     <!-- Start time -->
                     <div style="margin-top:20px; margin-bottom:5px;">Start Time</div>
-                    <input id="input_start_time" type="time" required="true" style="width:90%; padding:8px;">
+                    <input id="input_time" type="time" required="true" style="width:90%; padding:8px;">
 
                     <!-- Duration -->
                     <div style="margin-top:20px; margin-bottom:20px;">
@@ -99,10 +99,10 @@
                                 </td>
                                 <td style="width:50%;">
                                     <select id="input_interval_unit" disabled="true" style="width:80%; padding:10px;">
-                                        <option value="1">Minutes</option>
-                                        <option value="2">Hours</option>
-                                        <option value="3">Days</option>
-                                        <option value="4">Weeks</option>
+                                        <option value="0">Minutes</option>
+                                        <option value="1">Hours</option>
+                                        <option value="2">Days</option>
+                                        <option value="3">Weeks</option>
                                     </select>
                                 </td>
                             </tr>
@@ -156,56 +156,73 @@
                 const durationSecond = scheduleForm.elements["input_duration_second"];
 
                 // 0 (Once), 1 (Repeat), 2 (Always Active)
-                if (mode === "0")
+                switch (mode)
                 {
-                    inputInterval.disabled = true;
-                    inputIntervalUnit.disabled = true;
-                    durationDay.required = true;
-                    durationDay.disabled = false;
-                    durationHour.required = true;
-                    durationHour.disabled = false;
-                    durationMinute.required = true;
-                    durationMinute.disabled = false;
-                    durationSecond.required = true;
-                    durationSecond.disabled = false;
-                }
-                else if (mode === "1")
-                {
-                    inputInterval.disabled = false;
-                    inputIntervalUnit.disabled = false;
-                    durationDay.required = true;
-                    durationDay.disabled = false;
-                    durationHour.required = true;
-                    durationHour.disabled = false;
-                    durationMinute.required = true;
-                    durationMinute.disabled = false;
-                    durationSecond.required = true;
-                    durationSecond.disabled = false;
-                }
-                else if (mode === "2")
-                {
-                    inputInterval.disabled = true;
-                    inputIntervalUnit.disabled = true;
-                    durationDay.required = false;
-                    durationDay.disabled = true;
-                    durationHour.required = false;
-                    durationHour.disabled = true;
-                    durationMinute.required = false;
-                    durationMinute.disabled = true;
-                    durationSecond.required = false;
-                    durationSecond.disabled = true;
+                    case "0":
+                        inputInterval.disabled = true;
+                        inputIntervalUnit.disabled = true;
+                        durationDay.required = true;
+                        durationDay.disabled = false;
+                        durationHour.required = true;
+                        durationHour.disabled = false;
+                        durationMinute.required = true;
+                        durationMinute.disabled = false;
+                        durationSecond.required = true;
+                        durationSecond.disabled = false;
+                        break;
+                    case "1": 
+                        inputInterval.disabled = false;
+                        inputIntervalUnit.disabled = false;
+                        durationDay.required = true;
+                        durationDay.disabled = false;
+                        durationHour.required = true;
+                        durationHour.disabled = false;
+                        durationMinute.required = true;
+                        durationMinute.disabled = false;
+                        durationSecond.required = true;
+                        durationSecond.disabled = false;
+                        break;
+                    case "2": 
+                        inputInterval.disabled = true;
+                        inputIntervalUnit.disabled = true;
+                        durationDay.required = false;
+                        durationDay.disabled = true;
+                        durationHour.required = false;
+                        durationHour.disabled = true;
+                        durationMinute.required = false;
+                        durationMinute.disabled = true;
+                        durationSecond.required = false;
+                        durationSecond.disabled = true;
+                        break;
+                    default:
+                        console.log("ToogleMode: invalid mode!");
                 }
             }
 
             function OnSubmitForm()
             {
                 const scheduleForm = document.getElementById("schedule_form");
-                const durationDay    = Number(scheduleForm.elements["input_duration_day"].value);
-                const durationHour   = Number(scheduleForm.elements["input_duration_hour"].value);
-                const durationMinute = Number(scheduleForm.elements["input_duration_minute"].value);
-                const durationSecond = Number(scheduleForm.elements["input_duration_second"].value);
+                const days = Number(scheduleForm.elements["input_duration_day"].value);
+                const hours = Number(scheduleForm.elements["input_duration_hour"].value);
+                const minutes = Number(scheduleForm.elements["input_duration_minute"].value);
+                const seconds = Number(scheduleForm.elements["input_duration_second"].value);
+                const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  
 
-                if (durationDay === 0 && durationHour === 0 && durationMinute === 0 && durationSecond === 0)
+                const scheduleObj = {
+                    id: Date.now().toString(),
+                    mode: scheduleForm.elements["input_mode"].value,
+                    date: scheduleForm.elements["input_date"].value,
+                    time: scheduleForm.elements["input_time"].value,
+                    duration: durationTotal.toString(),
+                    durationDay: days.toString(),
+                    durationHour: hours.toString(),
+                    durationMinute: minutes.toString(),
+                    durationSecond: seconds.toString(),
+                    interval: scheduleForm.elements["input_interval"].value,
+                    intervalUnit: scheduleForm.elements["input_interval_unit"].value
+                };
+
+                if (scheduleObj.durationDay === "0" && scheduleObj.durationHour === "0" && scheduleObj.durationMinute === "0" && scheduleObj.durationSecond === "0")
                 {
                     scheduleForm.elements["input_duration_second"].setCustomValidity("Duration Must Be Greater then 0 Second");
                 }
@@ -216,7 +233,7 @@
                     return false;
                 } 
                 
-                AddSchedule();
+                SendSchedule(scheduleObj);
                 return false;
             }
 
@@ -225,72 +242,48 @@
                 document.getElementById("input_duration_second").setCustomValidity("");
             }
 
-            function AddSchedule()
+            function DisplaySchedule(scheduleObj)
             {
                 // reference to containers
                 const container = document.getElementById("schedule_container");
                 const panel = document.getElementById("schedule_panel_template");
                 const overlay = document.getElementById("overlay");
                 const clone = panel.cloneNode(true);
-
-                // reference to placeholders (get reference to value, not to object)
-                const mode = document.getElementById("input_mode").value;  
-                const date = document.getElementById("input_date").value;
-                const startTime = document.getElementById("input_start_time").value;
-                const scheduleForm = document.getElementById("schedule_form");
-                const durationDay = Number(scheduleForm.elements["input_duration_day"].value);
-                const durationHour = Number(scheduleForm.elements["input_duration_hour"].value);
-                const durationMinute = Number(scheduleForm.elements["input_duration_minute"].value);
-                const durationSecond = Number(scheduleForm.elements["input_duration_second"].value);
-                const interval = document.getElementById("input_interval").value;
-                const intervalUnit = document.getElementById("input_interval_unit").value;  // 1 (minutes), 2 (hours), 3 (days), 4 (weeks)
-
-                // set placeholder value with user input
-                clone.dataset.mode = mode;
-                switch (mode)
-                {
-                    // <option value=""> will always be string even without ""
-                    case "0" :
-                        clone.querySelector(".Mode").innerText = "Once";
-                        break;
-                    case "1" :
-                        clone.querySelector(".Mode").innerText = "Repeat";
-                        clone.querySelector("#interval_placeholder").style.display = "block";   // fix interval placeholder issue : display it in clone, not template
-                        
-                        switch (intervalUnit)
-                        {
-                            case "1" :
-                                clone.dataset.interval = interval * 60;
-                                clone.querySelector(".Interval").innerText = interval + " Minutes";
-                                break;
-                            case "2" : 
-                                clone.dataset.interval = interval * 3600;
-                                clone.querySelector(".Interval").innerText = interval + " Hours";
-                                break;
-                            case "3" :
-                                clone.dataset.interval = interval * 3600 * 24;
-                                clone.querySelector(".Interval").innerText = interval + " Days";
-                                break;
-                            case "4" :
-                                clone.dataset.interval = interval * 3600 * 24 * 7;
-                                clone.querySelector(".Interval").innerText = interval + " Weeks";
-                                break;
-                            default : 
-                                clone.querySelector(".Interval").innerText = "Error";
-                        }
-                        break;
-                    case "2" : 
-                        clone.querySelector(".Mode").innerText = "Always Active";
-                        break;
-                    default :
-                        clone.querySelector(".Interval").innerText = "Error";
+                const modeMap = {
+                    "0": "Once",
+                    "1": "Repeat",
+                    "2": "Always Active"
+                };
+                const intervalUnitMap = {
+                    "0": "Minutes",
+                    "1": "Hours",
+                    "2": "Days",
+                    "3": "Weeks"
                 }
-                clone.dataset.date = date;
-                clone.querySelector(".Date").innerText = clone.dataset.date;
-                clone.dataset.startTime = startTime;
-                clone.querySelector(".StartTime").innerText = clone.dataset.startTime;
-                clone.dataset.duration = (durationDay * 24 * 3600) + (durationHour * 3600) + (durationMinute * 60) + durationSecond;
-                clone.querySelector(".Duration").innerText = durationDay + " Days, " + durationHour + " Hours, " + durationMinute + " Minutes, " + durationSecond + " Seconds";
+
+                clone.querySelector(".Mode").innerText = modeMap[scheduleObj.mode] || "Unknown";
+                switch (scheduleObj.mode)
+                {
+                    case "0":
+                        clone.querySelector("#duration_placeholder").style.display = "block";
+                        clone.querySelector("#interval_placeholder").style.display = "none";
+                        clone.querySelector(".Duration").innerText = scheduleObj.durationDay + " Days, " + scheduleObj.durationHour + " Hours, " + scheduleObj.durationMinute + " Minutes, " + scheduleObj.durationSecond + " Seconds";
+                        break;
+                    case "1": 
+                        clone.querySelector("#duration_placeholder").style.display = "block";
+                        clone.querySelector("#interval_placeholder").style.display = "block";
+                        clone.querySelector(".Duration").innerText = scheduleObj.durationDay + " Days, " + scheduleObj.durationHour + " Hours, " + scheduleObj.durationMinute + " Minutes, " + scheduleObj.durationSecond + " Seconds";
+                        clone.querySelector(".Interval").innerText = scheduleObj.interval + " " + (intervalUnitMap[scheduleObj.intervalUnit] || "Unknown");
+                        break;
+                    case "2":
+                        clone.querySelector("#duration_placeholder").style.display = "none";
+                        clone.querySelector("#interval_placeholder").style.display = "none";
+                        break;
+                    default: 
+                        console.log("AddSchedule: invalid mode!");
+                }
+                clone.querySelector(".Date").innerText = scheduleObj.date;
+                clone.querySelector(".Time").innerText = scheduleObj.time
                 
                 clone.style.display = "block";
                 clone.id = "schedule_panel";
@@ -299,20 +292,8 @@
                 SendSchedule(mode, date, startTime, durationDay, durationHour, durationMinute, durationSecond, interval, intervalUnit);
             }
 
-            function SendSchedule(mode, date, startTime, durationDay, durationHour, durationMinute, durationSecond, interval, intervalUnit)
+            function SendSchedule(scheduleObj)
             {
-                var scheduleObj = {
-                    Mode: mode,
-                    Date: date,
-                    Start: startTime,
-                    Day: durationDay,
-                    Hour: durationHour,
-                    Minute: durationMinute,
-                    Second: durationSecond,
-                    Interval: interval,
-                    Unit: intervalUnit
-                };
-
                 fetch("/upload", {
                     method: 'POST',
                     headers: {
