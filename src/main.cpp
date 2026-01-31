@@ -103,13 +103,6 @@ void StoreSchedule(AsyncWebServerRequest* request)
 {
   request->send(200, "text/plain", "schedule is sent and stored!");
 
-  /*
-    JsonDocument is basic type without any allocation rule (newer library expect this)
-    StaticJsonDocument is stored in stack (fixed size)
-    DynamicJsonDocument is stored in heap (dynamic size)
-    BasicJsonDocument is for custom allocation strategy
-  */
-
   File scheduleFile = LittleFS.open("/schedule.txt", "w");
   if (!scheduleFile)
   {
@@ -145,17 +138,30 @@ void ReceiveSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
   {
     receivedSchedule += (char)data[i];
   }
-  Serial.println(receivedSchedule);
 }
 
 void InitWebServer()
 {
-  // GET / : send website page to client
+  // GET / : client ask to display web page, esp32 respond by sending html file
   webServer.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    if (!LittleFS.exists("/index.html"))
+    {
+      request->send(404, "text/plain");
+      return; 
+    }
     request->send(LittleFS, "/index.html", "text/html");
   });
-  // POST /upload : receive data from website and store it inside schedule.txt
+  // POST /upload : client send schedule data, esp32 respond with handlers to store it
   webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveSchedule); // onRequest run after data fully transferred, onUpload and onBody run during transfer
+  // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
+  webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* request) {
+    if (!LittleFS.exists("/schedule.txt"))
+    {
+      request->send(404, "application/json", "[]");
+      return;
+    }
+    request->send(LittleFS, "/schedule.txt", "text/plain");
+  });
   webServer.begin();
   Serial.println("IP Address : " + WiFi.localIP().toString());
   delay(1000);
@@ -331,79 +337,7 @@ void StateManagerTask(void* params)
 
 
 // Test Functions =====================================================
-TaskHandle_t stateTestHandle = NULL;
 
-void StateTest(void* params)
-{
-  bool isMenuShown = false;
-  bool isEditMenuShown = false;
-  String receivedInput = "";
-  char inputEvent;
-  request_format request;
-
-  while (true)
-  {
-    if (!isMenuShown)
-    {
-      Serial.println("\n1 : current state");
-      Serial.println("2 : turn on device");
-      Serial.println("3 : turn off device");
-      Serial.println("4 : trigger error");
-      Serial.println("your input : ");
-      isMenuShown = !isMenuShown;
-    }
-    
-    while (Serial.available())
-    {
-      char inputChar = Serial.read();
-      if (inputChar == '\n')
-      {
-        break;
-      }
-      receivedInput += inputChar;
-    }
-
-    if (receivedInput != NULL)
-    {
-      switch (receivedInput.charAt(0))
-      {
-        case '1' :
-          state_enum receivedState;
-          request.eventCategory = EVENT_ASK_STATE;
-          if (xQueueSend(requestQueue, &request, pdMS_TO_TICKS(500)))
-          {
-            xQueueReceive(responseQueue, &receivedState, portMAX_DELAY);
-            Serial.println("current state : " + String(receivedState));
-          }
-          break;
-
-        case '2' :
-          request.eventCategory = EVENT_DEVICE_ON;
-          xQueueSend(requestQueue, &request, pdMS_TO_TICKS(500));
-          Serial.println("State Changed");
-          break;
-
-        case '3' :
-          request.eventCategory = EVENT_DEVICE_OFF;
-          xQueueSend(requestQueue, &request, pdMS_TO_TICKS(500));
-          Serial.println("State Changed");
-          break;
-
-        case '4' :
-          request.eventCategory = EVENT_DEVICE_FAIL;
-          xQueueSend(requestQueue, &request, pdMS_TO_TICKS(500));
-          Serial.println("State Changed");
-          break;
-
-        default :
-          Serial.println("invalid option!");
-      }
-      receivedInput = "";
-    }
-    
-    vTaskDelay(pdTICKS_TO_MS(1000));
-  }
-}
 // Test Functions End =====================================================
 
 
@@ -439,15 +373,6 @@ void setup()
     &StateManagerTaskHandle,
     0
   );
-  // xTaskCreatePinnedToCore(
-  //   StateTest,
-  //   "State Test",
-  //   2048,
-  //   NULL,
-  //   1,
-  //   &stateTestHandle,
-  //   1
-  // );
 }
 
 void loop() 
