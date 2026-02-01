@@ -7,8 +7,6 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
     </head>
 
-
-
     <body style="margin:0; min-height:100vh; background: linear-gradient(to bottom,rgb(50,50,50),rgb(30,30,30)); font-family: monospace; color: rgb(220,220,220); padding:16px;">
         <!-- Top content / status -->
         <div style="text-align:center; margin-bottom:24px;">
@@ -17,7 +15,7 @@
         </div>
         
         <!-- Schedule Panel Template -->
-        <div id="schedule_panel_template" data-mode="" data-date="" data-startTime="" data-duration="" data-interval="" style="display:none; border:1px solid rgb(80,80,80); background: rgb(10,10,10); padding:10px; margin-bottom:10px;">  
+        <div id="schedule_template" class="Schedule" data-mode="" data-date="" data-startTime="" data-duration="" data-interval="" style="display:none; border:1px solid rgb(80,80,80); background: rgb(10,10,10); padding:10px; margin-bottom:10px;">  
             <div style="margin-bottom:6px;">Mode: <b class="Mode"></b></div>
             <div style="margin-bottom:6px;">Date: <b class="Date"></b></div>
             <div style="margin-bottom:6px;">Time: <b class="Time"></b></div>
@@ -33,7 +31,7 @@
                     <div style="margin-bottom:8px;">
                         Confirm deletion?
                     </div>
-                    <button id="delete_schedule_button" onclick="RemoveSchedule(this)" style="width:100%; padding:8px; background: rgb(120,0,0); color: rgb(255,200,200); border:1px solid rgb(180,80,80); font-family: monospace;">
+                    <button id="delete_schedule_button" onclick="DeleteSchedule(this)" style="width:100%; padding:8px; background: rgb(120,0,0); color: rgb(255,200,200); border:1px solid rgb(180,80,80); font-family: monospace;">
                         CONFIRM DELETE
                     </button>
                 </div>
@@ -122,6 +120,7 @@
 
 
 
+
         <!-- Script Section (Javascript) -->
         <script>
             function fixVh()    // fix mobile height issue : remove 100vh at overlay and use windows.innerHeight instead
@@ -132,15 +131,18 @@
             window.addEventListener("orientationchange", fixVh);
             fixVh();
 
+
             function OpenOverlay()
             {
                 document.getElementById("overlay").style.display = "block";
             }
 
+
             function CloseOverlay()
             {
                 document.getElementById("overlay").style.display = "none";
             }
+
 
             function ToggleMode()
             {
@@ -152,7 +154,6 @@
                 const durationHour = scheduleForm.elements["input_duration_hour"];
                 const durationMinute = scheduleForm.elements["input_duration_minute"];
                 const durationSecond = scheduleForm.elements["input_duration_second"];
-
                 // 0 (Once), 1 (Repeat), 2 (Always Active)
                 switch (mode)
                 {
@@ -197,6 +198,7 @@
                 }
             }
 
+
             function OnSubmitForm()
             {
                 const scheduleForm = document.getElementById("schedule_form");
@@ -205,7 +207,6 @@
                 const minutes = Number(scheduleForm.elements["input_duration_minute"].value);
                 const seconds = Number(scheduleForm.elements["input_duration_second"].value);
                 const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  
-
                 const scheduleObj = {
                     id: Date.now().toString(),
                     mode: scheduleForm.elements["input_mode"].value,
@@ -219,34 +220,33 @@
                     interval: scheduleForm.elements["input_interval"].value,
                     intervalUnit: scheduleForm.elements["input_interval_unit"].value
                 };
-
                 if (scheduleObj.durationDay === "0" && scheduleObj.durationHour === "0" && scheduleObj.durationMinute === "0" && scheduleObj.durationSecond === "0")
                 {
                     scheduleForm.elements["input_duration_second"].setCustomValidity("Duration Must Be Greater then 0 Second");
                 }
-
                 if(!scheduleForm.checkValidity())
                 {
                     scheduleForm.reportValidity(); 
                     return false;
                 } 
-                
                 CloseOverlay();
                 SendSchedule(scheduleObj);
                 ReceiveSchedule();
                 return false;
             }
 
+
             function ClearCustomValidity()
             {
                 document.getElementById("input_duration_second").setCustomValidity("");
             }
 
+
             function DisplaySchedule(scheduleObj)
             {
                 // reference to containers
                 const container = document.getElementById("schedule_container");
-                const panel = document.getElementById("schedule_panel_template");
+                const panel = document.getElementById("schedule_template");
                 const clone = panel.cloneNode(true);
                 const modeMap = {
                     "0": "Once",
@@ -259,7 +259,6 @@
                     "2": "Days",
                     "3": "Weeks"
                 }
-
                 clone.querySelector(".Mode").innerText = modeMap[scheduleObj.mode] || "Unknown";
                 switch (scheduleObj.mode)
                 {
@@ -283,12 +282,11 @@
                 }
                 clone.querySelector(".Date").innerText = scheduleObj.date;
                 clone.querySelector(".Time").innerText = scheduleObj.time
-                
                 clone.style.display = "block";
                 clone.id = "schedule_panel";
                 container.appendChild(clone);
-                SendSchedule(scheduleObj);
             }
+
 
             function SendSchedule(scheduleObj)
             {
@@ -300,6 +298,7 @@
                     body: JSON.stringify(scheduleObj)
                 }).catch(error => console.error("Error: ", error));
             }
+
 
             function ReceiveSchedule()
             {
@@ -315,19 +314,27 @@
                             return null;
                         }
                     })
-                    
                     const container = document.getElementById("schedule_container");
                     container.innerHTML = "";   // delete all schedule panels
-
                     scheduleArray.forEach(schedule => {
                         DisplaySchedule(schedule);
                     })
                 });
             }
 
-            function RemoveSchedule(button)
+
+            function DeleteSchedule(button)
             {
-                const schedulePanel = button.closest("div").parentElement.parentElement;
+                const schedulePanel = button.closest(".Schedule");
+                const scheduleId = button.closest(".Schedule").id;
+                console.log("ID: ", scheduleId);
+                fetch("/upload", {
+                    method: 'POST',
+                    headers: {
+                        'content-type': 'application/json'
+                    },
+                    body: JSON.stringify(scheduleId)
+                }).catch(error => console.error("Error: ", error));
                 schedulePanel.remove();
             }
         </script>

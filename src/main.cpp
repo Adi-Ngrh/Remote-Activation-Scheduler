@@ -16,7 +16,7 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 
 
 
-// to do : fix the state test task to ensure state manager can respond to state test request to ask current state or change it (done)
+// to do : handle deserializeJson() explicitly for important errors
 // Global variables & definitions
 // Tasks
 xTaskHandle StateManagerTaskHandle = NULL;
@@ -60,7 +60,7 @@ QueueHandle_t responseQueue;
 const char* wifi_ssid = "punya orang";
 const char* wifi_password = "b57aigqs";
 AsyncWebServer webServer(80);
-String receivedSchedule = "";
+String receivedData = "";
 HTTPClient http;
 
 // NTP related variables
@@ -101,15 +101,14 @@ void InitWifi()
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* request)
 {
-  request->send(200, "text/plain", "schedule is sent and stored!");
-
-  File scheduleFile = LittleFS.open("/schedule.txt", "w");
+  File scheduleFile = LittleFS.open("/schedule.txt", "a");
   if (!scheduleFile)
   {
     Serial.println("Schedule file missing or can't be opened");
+    request->send(404, "text/plain", "schedule file is missing!");
     return;
   }
-  scheduleFile.println(receivedSchedule);
+  scheduleFile.println(receivedData);
   scheduleFile.close();
 
   // confirmation
@@ -119,24 +118,73 @@ void StoreSchedule(AsyncWebServerRequest* request)
     Serial.println("Schedule file missing or can't be opened");
     return;
   }
+  Serial.println("FILE START");
   while (scheduleFile.available())
   {
-    Serial.write(scheduleFile.read());
+    Serial.println(scheduleFile.readStringUntil('\n'));
   }
+  Serial.println("FILE END");
   scheduleFile.close();
+  request->send(200, "text/plain", "schedule is sent and stored!");
 }
 
-void ReceiveSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total)
+void DeleteSchedule(AsyncWebServerRequest* request)
+{
+  File scheduleFileOriginal = LittleFS.open("/schedule.txt", "r");
+  File scheduleFileTemp = LittleFS.open("/schedule_temp.txt", "w");
+  if (!scheduleFileOriginal)
+  {
+    Serial.println("Schedule file missing or can't be opened");
+    request->send(404, "text/plain", "schedule file is missing!");
+    return;
+  }
+  while (scheduleFileOriginal.available())
+  {
+    JsonDocument scheduleDoc;
+    DeserializationError error = deserializeJson(scheduleDoc, scheduleFileOriginal);
+    if (error)
+    {
+      break;  
+    }
+    if (scheduleDoc["id"] == receivedData)
+    {
+      String scheduleString;
+      serializeJson(scheduleDoc, scheduleString);
+      scheduleFileTemp.println(scheduleString);
+    }
+  }
+  scheduleFileOriginal.close();
+  scheduleFileTemp.close();
+  LittleFS.remove("/schedule.txt");
+  LittleFS.rename("/schedule_temp.txt", "/schedule.txt");
+
+  // confirmation
+  File scheduleFile = LittleFS.open("/schedule.txt", "r");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule file missing or can't be opened");
+    return;
+  }
+  Serial.println("FILE START");
+  while (scheduleFile.available())
+  {
+    Serial.println(scheduleFile.readStringUntil('\n'));
+  }
+  Serial.println("FILE END");
+  scheduleFile.close();
+  request->send(200, "text/plain", "schedule is deleted!");
+}
+
+void ReceiveData(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total)
 {
   if (index == 0)
   {
-    receivedSchedule = "";
-    receivedSchedule.reserve(total);
+    receivedData = "";
+    receivedData.reserve(total);
   }
-
   for (size_t i = 0; i < len; i++)
   {
-    receivedSchedule += (char)data[i];
+    receivedData += (char)data[i];
   }
 }
 
@@ -152,7 +200,7 @@ void InitWebServer()
     request->send(LittleFS, "/index.html", "text/html");
   });
   // POST /upload : client send schedule data, esp32 respond with handlers to store it
-  webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveSchedule); // onRequest run after data fully transferred, onUpload and onBody run during transfer
+  webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveData); // onRequest run after data fully transferred, onUpload and onBody run during transfer
   // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
   webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* request) {
     if (!LittleFS.exists("/schedule.txt"))
@@ -162,6 +210,8 @@ void InitWebServer()
     }
     request->send(LittleFS, "/schedule.txt", "text/plain");
   });
+  // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
+  webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
   webServer.begin();
   Serial.println("IP Address : " + WiFi.localIP().toString());
   delay(1000);
@@ -189,7 +239,7 @@ void InitLittleFS()
   Serial.print("Test file : ");
   while (testFile.available())
   {
-    Serial.write(testFile.read());  // get raw bytes
+    Serial.write(testFile.read());  // file.read() get raw byte one at time, serial.write() display the byte (work with byte only)
   }
   Serial.print("\n");
   testFile.close();
