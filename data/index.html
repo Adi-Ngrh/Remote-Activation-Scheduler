@@ -248,6 +248,7 @@
                 const container = document.getElementById("schedule_container");
                 const panel = document.getElementById("schedule_template");
                 const clone = panel.cloneNode(true);
+                clone.id = scheduleObj.id;
                 const modeMap = {
                     "0": "Once",
                     "1": "Repeat",
@@ -283,13 +284,13 @@
                 clone.querySelector(".Date").innerText = scheduleObj.date;
                 clone.querySelector(".Time").innerText = scheduleObj.time
                 clone.style.display = "block";
-                clone.id = "schedule_panel";
                 container.appendChild(clone);
             }
 
 
             function SendSchedule(scheduleObj)
             {
+                console.log(scheduleObj.id);
                 fetch("/upload", {
                     method: 'POST',
                     headers: {
@@ -328,7 +329,7 @@
                 const schedulePanel = button.closest(".Schedule");
                 const scheduleId = button.closest(".Schedule").id;
                 console.log("ID: ", scheduleId);
-                fetch("/upload", {
+                fetch("/delete", {
                     method: 'POST',
                     headers: {
                         'content-type': 'application/json'
@@ -337,6 +338,11 @@
                 }).catch(error => console.error("Error: ", error));
                 schedulePanel.remove();
             }
+
+
+            document.addEventListener("DOMContentLoaded", function() {
+                ReceiveSchedule();
+            });
         </script>
     </body>
 </html>

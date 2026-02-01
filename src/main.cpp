@@ -146,7 +146,8 @@ void DeleteSchedule(AsyncWebServerRequest* request)
     {
       break;  
     }
-    if (scheduleDoc["id"] == receivedData)
+    receivedData.replace("\"", "");   // get rid of literal quote (\") being sent by JSON.stringify()
+    if (scheduleDoc["id"].as<String>() != receivedData)
     {
       String scheduleString;
       serializeJson(scheduleDoc, scheduleString);
