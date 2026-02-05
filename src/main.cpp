@@ -18,11 +18,9 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 
 // to do : handle deserializeJson() explicitly for important errors
 // Global variables & definitions
-// Tasks
+#define SCHEDULE_ARRAY_SIZE 50
 xTaskHandle StateManagerTaskHandle = NULL;
-xTaskHandle ErrorHandlingTaskHandle = NULL;
-
-// State & event
+xTaskHandle CheckTimeTaskHandle = NULL;
 typedef enum {
   STATE_IDLE,
   STATE_ACTIVE,
@@ -38,22 +36,18 @@ typedef enum{
   EVENT_RTC_FAIL,
   EVENT_ASK_STATE
 } event_enum;
-
-// data format
-struct schedule_format{
-  bool isOnce;
-  bool dayMode; // 0 for week days, 1 for month days
-  struct tm startTime;
-  uint16_t pumpDurationSec;
+struct Schedule{
+  int mode;
+  time_t startTime;
+  uint16_t duration;
 };
-typedef struct{
+struct Request{
   event_enum eventCategory;
-  std::optional<schedule_format> extra;
-} request_format;
-
-// queue
+  std::optional<Schedule> extra;
+};
 QueueHandle_t requestQueue;
 QueueHandle_t responseQueue;
+Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
 // WiFi & website related variables
 // ensure WiFi use 2,4 GHz and use WPA2 for compatibility
@@ -83,6 +77,76 @@ bool isDeviceActive = false;
 
 
 // WiFi related functions
+void InitWifi();
+// WebServer related functions
+void StoreSchedule(AsyncWebServerRequest* request);
+void DeleteSchedule(AsyncWebServerRequest* request);
+void ReceiveData(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
+void InitWebServer();
+// LittleFS related functions
+void InitLittleFS();
+void ReadSchedule();
+time_t ExtractStartTime(JsonDocument& doc);
+// NTP related functions
+void InitNTP();
+// RS3231 related functions
+void InitRTC();
+// Device related functions
+void TurnOnDevice();
+void TurnOffDevice();
+void StateManagerTask(void* params);
+
+
+
+void setup() 
+{
+  Serial.begin(115200);
+  pinMode(16, OUTPUT);
+  InitWifi();
+  InitLittleFS();
+  InitNTP();
+  InitRTC();
+  InitWebServer();
+
+  requestQueue = xQueueCreate(1, sizeof(Request));
+  if (requestQueue == NULL)
+  {
+    Serial.println("request queue failed!");
+  }
+
+  responseQueue = xQueueCreate(1, sizeof(state_enum));
+  if (responseQueue == NULL)
+  {
+    Serial.println("response queue failed!");
+  }
+
+  xTaskCreatePinnedToCore(
+    StateManagerTask,
+    "State Manager Task",
+    2048,
+    NULL,
+    1,
+    &StateManagerTaskHandle,
+    0
+  );
+  xTaskCreatePinnedToCore(
+    CheckTimeTask,
+    "Check Time Task",
+    2048,
+    NULL,
+    1,
+    &CheckTimeTaskHandle,
+    1
+  );
+}
+
+void loop() 
+{ 
+}
+
+
+
+// WiFi related functions
 void InitWifi()
 {
   WiFi.mode(WIFI_STA);
@@ -95,7 +159,6 @@ void InitWifi()
   Serial.println("Connected to : " + String(wifi_ssid));
   delay(1000);
 }
-
 
 
 // WebServer related functions
@@ -219,7 +282,6 @@ void InitWebServer()
 }
 
 
-
 // LittleFS related functions
 void InitLittleFS()
 {
@@ -247,6 +309,51 @@ void InitLittleFS()
   delay(1000);
 }
 
+void ReadSchedule()
+{
+  int c = 0;
+  File scheduleFile = LittleFS.open("/schedule.txt", "r");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule file missing or can't be opened");
+  }
+  while (scheduleFile.available())
+  {
+    JsonDocument scheduleDoc;
+    DeserializationError error = deserializeJson(scheduleDoc, scheduleFile);
+    if(error)
+    {
+      break;
+    }
+    scheduleArray[c].mode = scheduleDoc["mode"];
+    scheduleArray[c].startTime = ExtractStartTime(scheduleDoc);
+    scheduleArray[c].duration = scheduleDoc["duration"];
+  }
+}
+
+time_t ExtractStartTime(JsonDocument& doc)
+{
+  const char* dateStr = doc["date"];
+  const char* timeStr = doc["time"];
+  // extract start date
+  int year, month, mday;
+  sscanf(dateStr, "%d-%d-%d", &year, &month, &mday);
+  // extract start time
+  int hour, minute;
+  sscanf(timeStr, "%d:%d", &hour, &minute);
+  // store result
+  struct tm t = {0};
+  t.tm_year = year - 1900;
+  t.tm_mon = month - 1;
+  t.tm_mday = mday;
+  t.tm_hour = hour;
+  t.tm_min = minute;
+  t.tm_sec = 0;
+  t.tm_isdst = -1;
+  // convert to epoch for easier processing
+  time_t epoch = mktime(&t);
+  return epoch;
+}
 
 
 // NTP related functions
@@ -270,7 +377,6 @@ void InitNTP()
   );
   delay(1000);
 }
-
 
 
 // RS3231 related functions
@@ -312,6 +418,13 @@ void InitRTC()
   delay(1000);
 }
 
+void CheckTimeTask(void* params)
+{
+  while(true)
+  {
+    rtc.now();
+  }
+}
 
 
 // Device related functions
@@ -328,12 +441,11 @@ void TurnOffDevice()
 } 
 
 
-
 // State manager
 void StateManagerTask(void* params)
 {
   state_enum currentState = STATE_IDLE;
-  request_format request;
+  Request request;
 
   while (true)
   {
@@ -386,47 +498,6 @@ void StateManagerTask(void* params)
 }
 
 
-
 // Test Functions =====================================================
 
 // Test Functions End =====================================================
-
-
-
-void setup() 
-{
-  Serial.begin(115200);
-  pinMode(16, OUTPUT);
-  InitWifi();
-  InitLittleFS();
-  InitNTP();
-  InitRTC();
-  InitWebServer();
-
-  requestQueue = xQueueCreate(1, sizeof(request_format));
-  if (requestQueue == NULL)
-  {
-    Serial.println("request queue failed!");
-  }
-
-  responseQueue = xQueueCreate(1, sizeof(state_enum));
-  if (responseQueue == NULL)
-  {
-    Serial.println("response queue failed!");
-  }
-
-  xTaskCreatePinnedToCore(
-    StateManagerTask,
-    "State Manager Task",
-    2048,
-    NULL,
-    1,
-    &StateManagerTaskHandle,
-    0
-  );
-}
-
-void loop() 
-{ 
-}
-
