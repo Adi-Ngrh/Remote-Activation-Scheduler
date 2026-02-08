@@ -15,39 +15,11 @@
 static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use of c++17
 
 
-
 // to do : handle deserializeJson() explicitly for important errors
 // Global variables & definitions
 #define SCHEDULE_ARRAY_SIZE 50
 xTaskHandle StateManagerTaskHandle = NULL;
-xTaskHandle CheckTimeTaskHandle = NULL;
-typedef enum {
-  STATE_IDLE,
-  STATE_ACTIVE,
-  STATE_CONFIG,
-  STATE_ERROR
-} state_enum;
-typedef enum{
-  EVENT_DEVICE_ON,
-  EVENT_DEVICE_OFF,
-  EVENT_DEVICE_FAIL,
-  EVENT_WIFI_DISCONNECT,
-  EVENT_NTP_FAIL,
-  EVENT_RTC_FAIL,
-  EVENT_ASK_STATE
-} event_enum;
-struct Schedule{
-  int mode;
-  time_t startTime;
-  uint16_t duration;
-};
-struct Request{
-  event_enum eventCategory;
-  std::optional<Schedule> extra;
-};
-QueueHandle_t requestQueue;
-QueueHandle_t responseQueue;
-Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
+xTaskHandle ScheduleTaskHandle = NULL;
 
 // WiFi & website related variables
 // ensure WiFi use 2,4 GHz and use WPA2 for compatibility
@@ -74,6 +46,39 @@ const uint8_t rtc_addr = 0x68;
 const uint8_t devicePin = 16;
 bool isDeviceActive = false;
 
+typedef enum {
+  STATE_IDLE,
+  STATE_ACTIVE,
+  STATE_CONFIG,
+  STATE_ERROR
+} state_enum;
+typedef enum{
+  EVENT_DEVICE_ON,
+  EVENT_DEVICE_OFF,
+  EVENT_DEVICE_FAIL,
+  EVENT_WIFI_DISCONNECT,
+  EVENT_NTP_FAIL,
+  EVENT_RTC_FAIL,
+  EVENT_ASK_STATE
+} event_enum;
+typedef enum{
+  NOTIFY_SCHEDULE_READ = 0b0001,
+  NOTIFY_SCHEDULE_SET_ALARM = 0b0010
+} scheduleTask_enum;
+struct Schedule{
+  int mode;
+  int intervalUnit;
+  time_t startTime;
+  uint16_t duration;
+  uint16_t interval;
+};
+struct Request{
+  event_enum eventCategory;
+  std::optional<Schedule> schedule;
+};
+QueueHandle_t requestQueue;
+QueueHandle_t responseQueue;
+Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
 
 // WiFi related functions
@@ -89,12 +94,14 @@ void ReadSchedule();
 time_t ExtractStartTime(JsonDocument& doc);
 // NTP related functions
 void InitNTP();
-// RS3231 related functions
+// DS3231 related functions
 void InitRTC();
 // Device related functions
 void TurnOnDevice();
 void TurnOffDevice();
 void StateManagerTask(void* params);
+void ScheduleTask(void* params);
+
 
 
 
@@ -130,12 +137,12 @@ void setup()
     0
   );
   xTaskCreatePinnedToCore(
-    CheckTimeTask,
+    ScheduleTask,
     "Check Time Task",
-    2048,
+    4096,
     NULL,
     1,
-    &CheckTimeTaskHandle,
+    &ScheduleTaskHandle,
     1
   );
 }
@@ -143,6 +150,7 @@ void setup()
 void loop() 
 { 
 }
+
 
 
 
@@ -189,6 +197,7 @@ void StoreSchedule(AsyncWebServerRequest* request)
   Serial.println("FILE END");
   scheduleFile.close();
   request->send(200, "text/plain", "schedule is sent and stored!");
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
 }
 
 void DeleteSchedule(AsyncWebServerRequest* request)
@@ -237,6 +246,7 @@ void DeleteSchedule(AsyncWebServerRequest* request)
   Serial.println("FILE END");
   scheduleFile.close();
   request->send(200, "text/plain", "schedule is deleted!");
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
 }
 
 void ReceiveData(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total)
@@ -312,12 +322,13 @@ void InitLittleFS()
 void ReadSchedule()
 {
   int c = 0;
+  memset(scheduleArray, 0, sizeof(scheduleArray));
   File scheduleFile = LittleFS.open("/schedule.txt", "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule file missing or can't be opened");
   }
-  while (scheduleFile.available())
+  while (scheduleFile.available() && c < SCHEDULE_ARRAY_SIZE)
   {
     JsonDocument scheduleDoc;
     DeserializationError error = deserializeJson(scheduleDoc, scheduleFile);
@@ -328,6 +339,17 @@ void ReadSchedule()
     scheduleArray[c].mode = scheduleDoc["mode"];
     scheduleArray[c].startTime = ExtractStartTime(scheduleDoc);
     scheduleArray[c].duration = scheduleDoc["duration"];
+    c++;
+  }
+  scheduleFile.close();
+
+  // confirmation
+  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
+  {
+    if (scheduleArray[i].startTime)
+    {
+      Serial.println(String(scheduleArray[i].mode) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
+    }
   }
 }
 
@@ -379,7 +401,7 @@ void InitNTP()
 }
 
 
-// RS3231 related functions
+// DS3231 related functions
 void InitRTC()
 {
   while (!Wire.begin(sda_pin, scl_pin, 100000))
@@ -418,11 +440,15 @@ void InitRTC()
   delay(1000);
 }
 
-void CheckTimeTask(void* params)
+void SetAlarm()
 {
-  while(true)
+  int closestSchedule = 0;
+  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
   {
-    rtc.now();
+    if (scheduleArray[i].startTime != NULL && scheduleArray[i].startTime < scheduleArray[closestSchedule].startTime)      
+    {
+      closestSchedule = i;
+    }
   }
 }
 
@@ -441,7 +467,7 @@ void TurnOffDevice()
 } 
 
 
-// State manager
+// Handle program state transition based on event value on Request struct
 void StateManagerTask(void* params)
 {
   state_enum currentState = STATE_IDLE;
@@ -493,7 +519,30 @@ void StateManagerTask(void* params)
           currentState = STATE_IDLE;
       }
     }
-    vTaskDelay(pdTICKS_TO_MS(500));
+    vTaskDelay(500);
+  }
+}
+
+
+// Handle RTC alarm setting and time keeping
+void ScheduleTask(void* params)
+{
+  uint32_t notifValue;
+  while(true)
+  {
+    if (xTaskNotifyWait(0x00, 0xFFFFFFFF, &notifValue, portMAX_DELAY) == pdPASS)
+    {
+      if (notifValue & NOTIFY_SCHEDULE_READ) 
+      {
+        ReadSchedule();
+        Serial.println("read schedules");
+      }
+
+      if (notifValue & NOTIFY_SCHEDULE_SET_ALARM)
+      {
+        SetAlarm();
+      }
+    }
   }
 }
 
