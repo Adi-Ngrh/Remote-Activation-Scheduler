@@ -15,6 +15,10 @@
 static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use of c++17
 
 
+// to do :
+//  - implement activation behaviour for repeat mode and always active schedule
+//  - implement month and year checking for the schedule.
+//  - evaluate wether state manager task is needed or should be completely replaced by schedule task
 // bugs : 
 // Global variables & definitions
 #define SCHEDULE_ARRAY_SIZE 50
@@ -488,14 +492,20 @@ void SetAlarm()
     }
     Serial.println("Closest Schedule : ");
     Serial.println(String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
-
-    DateTime alarm1Time = DateTime(scheduleArray[closestSchedule].startTime);
+    // set start time to alarm2
+    DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
     char buffer[] = "YYYY/MM/DD hh:mm:ss";
-    Serial.println(alarm1Time.toString(buffer));
-    rtc.setAlarm1(alarm1Time, DS3231_A1_Date);
+    Serial.println(startTime.toString(buffer));
+    rtc.setAlarm2(startTime, DS3231_A2_Date);
+    // set duration to alarm1
+    time_t finishTimeEpoch = scheduleArray[closestSchedule].startTime + scheduleArray[closestSchedule].duration;
+    DateTime finishTime = DateTime(finishTimeEpoch);
+    char buffer2[] = "YYYY/MM/DD hh:mm:ss";
+    Serial.println(finishTime.toString(buffer2));
+    rtc.setAlarm1(finishTime, DS3231_A1_Date);
     delay(10);
+    rtc.clearAlarm(2);
     rtc.clearAlarm(1);
-    Serial.println(digitalRead(sqw_pin));
   }
   else
   {
@@ -508,8 +518,8 @@ void IRAM_ATTR onAlarmISR()
   if(digitalRead(sqw_pin) == LOW)
   {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // important: eSetBits will append multiple bits into one atomic state (bitwise accumulation, ex: 0b0001 and 0b0010 sent back-to-back is the same as 0b0011 sent alone)
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    // important: eSetBits will append multiple bits into one atomic state (bitwise accumulation, ex: 0b0001 and 0b0010 sent back-to-back is the same as 0b0011 sent alone)
     xTaskNotifyFromISR(ScheduleTaskHandle, ALARM_TRIGGERED, eSetBits, &xHigherPriorityTaskWoken); 
   }
 }
@@ -607,8 +617,19 @@ void ScheduleTask(void* pvParams)
       
       if (notifValue & ALARM_TRIGGERED)
       {
-        TurnOnDevice();
-        Serial.println("Device Turned On");
+        if (rtc.alarmFired(2))
+        {
+          TurnOnDevice();
+          Serial.println("Device Turned On");
+          rtc.clearAlarm(2);
+        }
+        else if (rtc.alarmFired(1))
+        {
+          TurnOffDevice();
+          Serial.println("Device Turned Off");
+          rtc.clearAlarm(1);
+        }
+        SetAlarm();
       }
     }
   }
