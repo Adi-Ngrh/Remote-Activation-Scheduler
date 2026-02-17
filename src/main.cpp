@@ -72,11 +72,12 @@ typedef enum{
 } scheduleTask_enum;
 
 struct Schedule{
+  int id;
   int mode;
-  int intervalUnit;
   time_t startTime;
   uint16_t duration;
   uint16_t interval;
+  int intervalUnit;
 };
 struct Request{
   event_enum eventCategory;
@@ -104,7 +105,9 @@ time_t ExtractStartTime(JsonDocument& doc);
 void InitNTP();
 // DS3231 related functions
 void InitRTC();
+int GetClosestSchedule();
 void SetAlarm();
+void SetAlarmDuration(int closestSchedule);
 void IRAM_ATTR onAlarmISR();
 // Device related functions
 void TurnOnDevice();
@@ -369,9 +372,12 @@ void ReadSchedule()
     {
       break;
     }
-    scheduleArray[c].mode = scheduleDoc["mode"];
-    scheduleArray[c].startTime = ExtractStartTime(scheduleDoc);
-    scheduleArray[c].duration = scheduleDoc["duration"];
+    scheduleArray[c].id = scheduleDoc["id"].as<int>();
+    scheduleArray[c].mode = scheduleDoc["mode"].as<int>();
+    scheduleArray[c].startTime = scheduleDoc["startTime"].as<time_t>() + gmt_offset;
+    scheduleArray[c].duration = scheduleDoc["duration"].as<uint16_t>();
+    scheduleArray[c].interval = scheduleDoc["interval"].as<uint16_t>();
+    scheduleArray[c].interval = scheduleDoc["intervalUnit"].as<int>();
     c++;
   }
   scheduleFile.close();
@@ -384,31 +390,6 @@ void ReadSchedule()
       Serial.println(String(scheduleArray[i].mode) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
     }
   }
-}
-
-time_t ExtractStartTime(JsonDocument& doc)
-{
-  const char* dateStr = doc["date"];
-  const char* timeStr = doc["time"];
-  // extract start date
-  int year, month, mday;
-  sscanf(dateStr, "%d-%d-%d", &year, &month, &mday);
-  // extract start time
-  int hour, minute;
-  sscanf(timeStr, "%d:%d", &hour, &minute);
-  // store result
-  struct tm t = {0};
-  t.tm_year = year - 1900;
-  t.tm_mon = month - 1;
-  t.tm_mday = mday;
-  t.tm_hour = hour;
-  t.tm_min = minute;
-  t.tm_sec = 0;
-  t.tm_isdst = -1;
-  // convert to epoch for easier processing
-  time_t epoch = mktime(&t);
-  epoch += gmt_offset;  // mktime() assuming the struct tm is localized. dont forget to add the result with the timezone offset
-  return epoch;
 }
 
 
@@ -478,7 +459,7 @@ void InitRTC()
   delay(1000);
 }
 
-void SetAlarm()
+int GetClosestSchedule()
 {
   int closestSchedule = 0;
   if (scheduleArray != NULL)
@@ -492,25 +473,38 @@ void SetAlarm()
     }
     Serial.println("Closest Schedule : ");
     Serial.println(String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
-    // set start time to alarm2
-    DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
-    char buffer[] = "YYYY/MM/DD hh:mm:ss";
-    Serial.println(startTime.toString(buffer));
-    rtc.setAlarm2(startTime, DS3231_A2_Date);
-    // set duration to alarm1
-    time_t finishTimeEpoch = scheduleArray[closestSchedule].startTime + scheduleArray[closestSchedule].duration;
-    DateTime finishTime = DateTime(finishTimeEpoch);
-    char buffer2[] = "YYYY/MM/DD hh:mm:ss";
-    Serial.println(finishTime.toString(buffer2));
-    rtc.setAlarm1(finishTime, DS3231_A1_Date);
-    delay(10);
-    rtc.clearAlarm(2);
-    rtc.clearAlarm(1);
+    return closestSchedule;
   }
   else
   {
     Serial.println("No Schedule");
+    return NULL;
   }
+}
+
+void SetAlarm()
+{
+  int closestSchedule = GetClosestSchedule();
+  // set start time to alarm2
+  DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
+  char buffer[] = "YYYY/MM/DD hh:mm:ss";
+  Serial.println(startTime.toString(buffer));
+  rtc.setAlarm2(startTime, DS3231_A2_Date);
+  delay(10);
+  rtc.clearAlarm(2);
+  SetAlarmDuration(closestSchedule);
+}
+
+void SetAlarmDuration(int closestSchedule)
+{
+  // set duration to alarm1
+  time_t finishTimeEpoch = scheduleArray[closestSchedule].startTime + scheduleArray[closestSchedule].duration;
+  DateTime finishTime = DateTime(finishTimeEpoch);
+  char buffer2[] = "YYYY/MM/DD hh:mm:ss";
+  Serial.println(finishTime.toString(buffer2));
+  rtc.setAlarm1(finishTime, DS3231_A1_Date);
+  delay(10);
+  rtc.clearAlarm(1);
 }
 
 void IRAM_ATTR onAlarmISR()

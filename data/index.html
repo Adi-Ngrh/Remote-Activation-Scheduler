@@ -202,25 +202,24 @@
             function OnSubmitForm()
             {
                 const scheduleForm = document.getElementById("schedule_form");
+                const date = scheduleForm.elements["input_date"].value;
+                const time = scheduleForm.elements["input_time"].value;
+                const dateTimeCombined = new Date(`${date}T${time}`);
+                const epochTime = Math.floor(dateTimeCombined.getTime() / 1000);    // getTime() use milisecond, turn it into second 
                 const days = Number(scheduleForm.elements["input_duration_day"].value);
                 const hours = Number(scheduleForm.elements["input_duration_hour"].value);
                 const minutes = Number(scheduleForm.elements["input_duration_minute"].value);
                 const seconds = Number(scheduleForm.elements["input_duration_second"].value);
-                const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  
+                const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  // merge day, hour, minute and second into total duration
                 const scheduleObj = {
                     id: Date.now().toString(),
                     mode: scheduleForm.elements["input_mode"].value,
-                    date: scheduleForm.elements["input_date"].value,
-                    time: scheduleForm.elements["input_time"].value,
+                    startTime: epochTime.toString(),
                     duration: durationTotal.toString(),
-                    durationDay: days.toString(),
-                    durationHour: hours.toString(),
-                    durationMinute: minutes.toString(),
-                    durationSecond: seconds.toString(),
                     interval: scheduleForm.elements["input_interval"].value,
                     intervalUnit: scheduleForm.elements["input_interval_unit"].value
                 };
-                if (scheduleObj.durationDay === "0" && scheduleObj.durationHour === "0" && scheduleObj.durationMinute === "0" && scheduleObj.durationSecond === "0")
+                if (Number(scheduleObj.duration) <= 0)
                 {
                     scheduleForm.elements["input_duration_second"].setCustomValidity("Duration Must Be Greater then 0 Second");
                 }
@@ -249,6 +248,22 @@
                 const panel = document.getElementById("schedule_template");
                 const clone = panel.cloneNode(true);
                 clone.id = scheduleObj.id;
+
+                // get the day, hour, minute and second from total duration
+                durationSecond = Number(scheduleObj.duration) % 60;
+                m = Math.floor(Number(scheduleObj.duration) / 60);
+                durationMinute = m % 60;
+                h = Math.floor(durationMinute / 60);
+                durationHour = h % 24;
+                durationDay = Math.floor(h / 24);
+
+                // get date and time from start time
+                const dateTime = new Date(scheduleObj.startTime * 1000); // epoch time use second, convert it to milisecond
+                const date = dateTime.toISOString().split('T')[0];
+                const hour = String(dateTime.getHours()).padStart(2, '0');
+                const minute = String(dateTime.getMinutes()).padStart(2, '0');
+                const time = `${hour}:${minute}`;
+
                 const modeMap = {
                     "0": "Once",
                     "1": "Repeat",
@@ -266,12 +281,12 @@
                     case "0":
                         clone.querySelector("#duration_placeholder").style.display = "block";
                         clone.querySelector("#interval_placeholder").style.display = "none";
-                        clone.querySelector(".Duration").innerText = scheduleObj.durationDay + " Days, " + scheduleObj.durationHour + " Hours, " + scheduleObj.durationMinute + " Minutes, " + scheduleObj.durationSecond + " Seconds";
+                        clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";
                         break;
                     case "1": 
                         clone.querySelector("#duration_placeholder").style.display = "block";
                         clone.querySelector("#interval_placeholder").style.display = "block";
-                        clone.querySelector(".Duration").innerText = scheduleObj.durationDay + " Days, " + scheduleObj.durationHour + " Hours, " + scheduleObj.durationMinute + " Minutes, " + scheduleObj.durationSecond + " Seconds";
+                        clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";
                         clone.querySelector(".Interval").innerText = scheduleObj.interval + " " + (intervalUnitMap[scheduleObj.intervalUnit] || "Unknown");
                         break;
                     case "2":
@@ -281,8 +296,8 @@
                     default: 
                         console.log("AddSchedule: invalid mode!");
                 }
-                clone.querySelector(".Date").innerText = scheduleObj.date;
-                clone.querySelector(".Time").innerText = scheduleObj.time
+                clone.querySelector(".Date").innerText = date;
+                clone.querySelector(".Time").innerText = time;
                 clone.style.display = "block";
                 container.appendChild(clone);
             }
