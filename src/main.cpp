@@ -16,11 +16,11 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 
 
 // to do :
-//  - implement activation behaviour for repeat mode and always active schedule
 //  - implement month and year checking for the schedule.
 //  - evaluate wether state manager task is needed or should be completely replaced by schedule task
 // bugs : 
-// Global variables & definitions
+// schedule id change to schedule array index unknowingly 
+// on repeat mode, new schedule with new start time isnt being added properly
 #define SCHEDULE_ARRAY_SIZE 50
 TaskHandle_t StateManagerTaskHandle = NULL;
 TaskHandle_t ScheduleTaskHandle = NULL;
@@ -37,6 +37,11 @@ HTTPClient http;
 const char* ntp_server = "pool.ntp.org";
 const long gmt_offset = 25200; // GMT+7 (3600 x 7)
 const int daylight_offset = 0;
+
+// LittleFS related variables
+const char* schedule_file = "schedule.txt";
+const char* temp_file = "temp.txt";
+const char* web_file = "index.html";
 
 // RS3231 related variables
 RTC_DS3231 rtc;
@@ -94,7 +99,7 @@ void InitWifi();
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest);
 void DeleteSchedule(AsyncWebServerRequest* pRequest);
-int RemoveSchedule(String idToDelete);
+int RemoveSchedule(int idToDelete);
 void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, size_t index, size_t total);
 void InitWebServer();
 // LittleFS related functions
@@ -114,8 +119,7 @@ void TurnOnDevice();
 void TurnOffDevice();
 void StateManagerTask(void* pvParams);
 void ScheduleTask(void* pvParams);
-
-
+void AfterScheduleHandle(int closestSchedule);
 
 
 void setup() 
@@ -167,6 +171,7 @@ void loop()
 }
 
 
+//==========================================================================================//
 
 
 // WiFi related functions
@@ -184,10 +189,13 @@ void InitWifi()
 }
 
 
+//==========================================================================================//
+
+
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest)
 {
-  File scheduleFile = LittleFS.open("/schedule.txt", "a");
+  File scheduleFile = LittleFS.open("schedule.txt", "a");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -198,7 +206,7 @@ void StoreSchedule(AsyncWebServerRequest* pRequest)
   scheduleFile.close();
 
   // confirmation
-  scheduleFile = LittleFS.open("/schedule.txt", "r");
+  scheduleFile = LittleFS.open("schedule.txt", "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -216,10 +224,32 @@ void StoreSchedule(AsyncWebServerRequest* pRequest)
   xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
 }
 
+
+void AddSchedule(Schedule s)
+{
+  JsonDocument doc;
+  doc["id"]           = String(s.id); 
+  doc["mode"]         = String(s.mode);
+  doc["startTime"]    = String(s.startTime);
+  doc["duration"]     = String(s.duration);
+  doc["interval"]     = String(s.interval);
+  doc["intervalUnit"] = String(s.intervalUnit);
+
+  File scheduleFile = LittleFS.open(schedule_file, "a");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule File Missing Or Can't Be Opened");
+    return;
+  }
+  serializeJson(doc, scheduleFile);
+  scheduleFile.close();
+}
+
+
 void DeleteSchedule(AsyncWebServerRequest* pRequest)
 {
   receivedData.replace("\"", ""); // get rid of literal quote (\") being sent by JSON.stringify()
-  int status = RemoveSchedule(receivedData);
+  int status = RemoveSchedule(receivedData.toInt());
   switch (status)
   {
     case 1:
@@ -230,7 +260,7 @@ void DeleteSchedule(AsyncWebServerRequest* pRequest)
   }
 
   // confirmation
-  File scheduleFile = LittleFS.open("/schedule.txt", "r");
+  File scheduleFile = LittleFS.open("schedule.txt", "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -248,15 +278,16 @@ void DeleteSchedule(AsyncWebServerRequest* pRequest)
   xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
 }
 
-int RemoveSchedule(String idToDelete)
+
+int RemoveSchedule(int idToDelete)
 {
-  File original = LittleFS.open("/schedule.txt", "r");
+  File original = LittleFS.open("schedule.txt", "r");
   if (!original)
   {
     Serial.println("Schedule File Cant Be Opened!");
     return 1;
   }
-  File temp = LittleFS.open("/schedule_temp.txt", "w");
+  File temp = LittleFS.open("schedule_temp.txt", "w");
   if (!temp)
   {
     Serial.println("Temp File Cant Be Opened!");
@@ -270,7 +301,7 @@ int RemoveSchedule(String idToDelete)
     {
       break;  
     }
-    if (scheduleDoc["id"].as<String>() != idToDelete)
+    if (scheduleDoc["id"].as<int>() != idToDelete)
     {
       String scheduleString;
       serializeJson(scheduleDoc, scheduleString);
@@ -279,11 +310,12 @@ int RemoveSchedule(String idToDelete)
   }
   original.close();
   temp.close();
-  LittleFS.remove("/schedule.txt");
-  LittleFS.rename("/schedule_temp.txt", "/schedule.txt");
-  Serial.println("Schedule : " + idToDelete + " successfully removed!");
+  LittleFS.remove("schedule.txt");
+  LittleFS.rename("schedule_temp.txt", "schedule.txt");
+  Serial.println("Schedule : " + String(idToDelete) + " successfully removed!");
   return 0;
 }
+
 
 void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, size_t index, size_t total)
 {
@@ -297,6 +329,7 @@ void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, si
     receivedData += (char)pData[i];
   }
 }
+
 
 void InitWebServer()
 {
@@ -313,12 +346,12 @@ void InitWebServer()
   webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveData); // onRequest run after data fully transferred, onUpload and onBody run during transfer
   // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
   webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists("/schedule.txt"))
+    if (!LittleFS.exists("schedule.txt"))
     {
       pRequest->send(404, "application/json", "[]");
       return;
     }
-    pRequest->send(LittleFS, "/schedule.txt", "text/plain");
+    pRequest->send(LittleFS, "schedule.txt", "text/plain");
   });
   // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
   webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
@@ -326,6 +359,9 @@ void InitWebServer()
   Serial.println("IP Address : " + WiFi.localIP().toString());
   delay(1000);
 }
+
+
+//==========================================================================================//
 
 
 // LittleFS related functions
@@ -340,7 +376,7 @@ void InitLittleFS()
   delay(1000);
 
   // sanity check
-  File testFile = LittleFS.open("/test.txt", "r");
+  File testFile = LittleFS.open("test.txt", "r");
   if (!testFile)
   {
     Serial.println("Test File Missing Or Can't Be Opened");
@@ -355,11 +391,12 @@ void InitLittleFS()
   delay(1000);
 }
 
+
 void ReadSchedule()
 {
   int c = 0;
   memset(scheduleArray, 0, sizeof(scheduleArray));
-  File scheduleFile = LittleFS.open("/schedule.txt", "r");
+  File scheduleFile = LittleFS.open("schedule.txt", "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -393,6 +430,9 @@ void ReadSchedule()
 }
 
 
+//==========================================================================================//
+
+
 // NTP related functions
 void InitNTP()
 {
@@ -414,6 +454,9 @@ void InitNTP()
   );
   delay(1000);
 }
+
+
+//==========================================================================================//
 
 
 // DS3231 related functions
@@ -459,6 +502,7 @@ void InitRTC()
   delay(1000);
 }
 
+
 int GetClosestSchedule()
 {
   int closestSchedule = 0;
@@ -472,7 +516,7 @@ int GetClosestSchedule()
       }
     }
     Serial.println("Closest Schedule : ");
-    Serial.println(String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
+    Serial.println(String(closestSchedule) + "|||" + String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
     return closestSchedule;
   }
   else
@@ -482,9 +526,11 @@ int GetClosestSchedule()
   }
 }
 
+
 void SetAlarm()
 {
   int closestSchedule = GetClosestSchedule();
+
   // set start time to alarm2
   DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
   char buffer[] = "YYYY/MM/DD hh:mm:ss";
@@ -492,8 +538,13 @@ void SetAlarm()
   rtc.setAlarm2(startTime, DS3231_A2_Date);
   delay(10);
   rtc.clearAlarm(2);
-  SetAlarmDuration(closestSchedule);
+
+  if (scheduleArray[closestSchedule].mode != 2)
+  {
+    SetAlarmDuration(closestSchedule);
+  }
 }
+
 
 void SetAlarmDuration(int closestSchedule)
 {
@@ -507,6 +558,7 @@ void SetAlarmDuration(int closestSchedule)
   rtc.clearAlarm(1);
 }
 
+
 void IRAM_ATTR onAlarmISR()
 {
   if(digitalRead(sqw_pin) == LOW)
@@ -517,6 +569,9 @@ void IRAM_ATTR onAlarmISR()
     xTaskNotifyFromISR(ScheduleTaskHandle, ALARM_TRIGGERED, eSetBits, &xHigherPriorityTaskWoken); 
   }
 }
+
+
+//==========================================================================================//
 
 
 // Device related functions
@@ -622,13 +677,49 @@ void ScheduleTask(void* pvParams)
           TurnOffDevice();
           Serial.println("Device Turned Off");
           rtc.clearAlarm(1);
+          int closestSchedule = GetClosestSchedule();
+          Serial.println(scheduleArray[closestSchedule].id);
+          AfterScheduleHandle(closestSchedule);
+          ReadSchedule();
+          SetAlarm();
         }
-        SetAlarm();
       }
     }
   }
 }
 
+
+void AfterScheduleHandle(int closestSchedule)
+{
+  // 0 (Once), 1 (Repeat), 2 (Always Active)
+  if (scheduleArray[closestSchedule].mode == 0)
+  {
+    RemoveSchedule(scheduleArray[closestSchedule].id);
+    return;
+  }
+  else if (scheduleArray[closestSchedule].mode == 1)
+  {
+    RemoveSchedule(scheduleArray[closestSchedule].id);
+    int interval;
+    // 0 (minutes), 1 (hours), 2 (days)
+    switch (scheduleArray[closestSchedule].intervalUnit)
+    {
+      case 0:
+        interval = scheduleArray[closestSchedule].interval * 60;
+        break;
+      case 1:
+        interval = scheduleArray[closestSchedule].interval * 3600;
+        break;
+      case 2:
+        interval = scheduleArray[closestSchedule].interval * 24 * 3600;
+        break;
+      default:
+        break;
+    }
+    scheduleArray[closestSchedule].startTime += (scheduleArray[closestSchedule].duration + interval);
+    AddSchedule(scheduleArray[closestSchedule]);
+  }
+}
 
 // Test Functions =====================================================
 
