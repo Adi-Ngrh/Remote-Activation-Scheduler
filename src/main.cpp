@@ -18,8 +18,6 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 // to do :
 //  - implement month and year checking for the schedule.
 //  - evaluate wether state manager task is needed or should be completely replaced by schedule task
-// bugs : 
-// schedule id change to schedule array index unknowingly 
 // on repeat mode, new schedule with new start time isnt being added properly
 #define SCHEDULE_ARRAY_SIZE 50
 TaskHandle_t StateManagerTaskHandle = NULL;
@@ -39,9 +37,9 @@ const long gmt_offset = 25200; // GMT+7 (3600 x 7)
 const int daylight_offset = 0;
 
 // LittleFS related variables
-const char* schedule_file = "schedule.txt";
-const char* temp_file = "temp.txt";
-const char* web_file = "index.html";
+const char* schedule_file = "/schedule.txt";
+const char* temp_file = "/temp.txt";
+const char* web_file = "/index.html";
 
 // RS3231 related variables
 RTC_DS3231 rtc;
@@ -77,7 +75,7 @@ typedef enum{
 } scheduleTask_enum;
 
 struct Schedule{
-  int id;
+  long long id;   // use 64 bit number to avoid overflow in 2038
   int mode;
   time_t startTime;
   uint16_t duration;
@@ -99,7 +97,7 @@ void InitWifi();
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest);
 void DeleteSchedule(AsyncWebServerRequest* pRequest);
-int RemoveSchedule(int idToDelete);
+int RemoveSchedule(long long idToDelete);
 void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, size_t index, size_t total);
 void InitWebServer();
 // LittleFS related functions
@@ -195,7 +193,7 @@ void InitWifi()
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest)
 {
-  File scheduleFile = LittleFS.open("schedule.txt", "a");
+  File scheduleFile = LittleFS.open(schedule_file, "a");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -206,7 +204,7 @@ void StoreSchedule(AsyncWebServerRequest* pRequest)
   scheduleFile.close();
 
   // confirmation
-  scheduleFile = LittleFS.open("schedule.txt", "r");
+  scheduleFile = LittleFS.open(schedule_file, "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -249,10 +247,10 @@ void AddSchedule(Schedule s)
 void DeleteSchedule(AsyncWebServerRequest* pRequest)
 {
   receivedData.replace("\"", ""); // get rid of literal quote (\") being sent by JSON.stringify()
-  int status = RemoveSchedule(receivedData.toInt());
+  int status = RemoveSchedule(strtoll(receivedData.c_str(), NULL, 10));
   switch (status)
   {
-    case 1:
+    case -1:
       pRequest->send(404, "text/plain", "file cant be opened!");
       break;
     default:
@@ -260,7 +258,7 @@ void DeleteSchedule(AsyncWebServerRequest* pRequest)
   }
 
   // confirmation
-  File scheduleFile = LittleFS.open("schedule.txt", "r");
+  File scheduleFile = LittleFS.open(schedule_file, "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -279,19 +277,19 @@ void DeleteSchedule(AsyncWebServerRequest* pRequest)
 }
 
 
-int RemoveSchedule(int idToDelete)
+int RemoveSchedule(long long idToDelete)
 {
-  File original = LittleFS.open("schedule.txt", "r");
+  File original = LittleFS.open(schedule_file, "r");
   if (!original)
   {
     Serial.println("Schedule File Cant Be Opened!");
-    return 1;
+    return -1;
   }
-  File temp = LittleFS.open("schedule_temp.txt", "w");
+  File temp = LittleFS.open(temp_file, "w");
   if (!temp)
   {
     Serial.println("Temp File Cant Be Opened!");
-    return 1;
+    return -1;
   }
   while (original.available())
   {
@@ -301,7 +299,7 @@ int RemoveSchedule(int idToDelete)
     {
       break;  
     }
-    if (scheduleDoc["id"].as<int>() != idToDelete)
+    if (scheduleDoc["id"].as<long long>() != idToDelete)
     {
       String scheduleString;
       serializeJson(scheduleDoc, scheduleString);
@@ -310,8 +308,8 @@ int RemoveSchedule(int idToDelete)
   }
   original.close();
   temp.close();
-  LittleFS.remove("schedule.txt");
-  LittleFS.rename("schedule_temp.txt", "schedule.txt");
+  LittleFS.remove(schedule_file);
+  LittleFS.rename(temp_file, schedule_file);
   Serial.println("Schedule : " + String(idToDelete) + " successfully removed!");
   return 0;
 }
@@ -335,23 +333,23 @@ void InitWebServer()
 {
   // GET / : client ask to display web page, esp32 respond by sending html file
   webServer.on("/", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists("/index.html"))
+    if (!LittleFS.exists(web_file))
     {
       pRequest->send(404, "text/plain");
       return; 
     }
-    pRequest->send(LittleFS, "/index.html", "text/html");
+    pRequest->send(LittleFS, web_file, "text/html");
   });
   // POST /upload : client send schedule data, esp32 respond with handlers to store it
   webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveData); // onRequest run after data fully transferred, onUpload and onBody run during transfer
   // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
   webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists("schedule.txt"))
+    if (!LittleFS.exists(schedule_file))
     {
       pRequest->send(404, "application/json", "[]");
       return;
     }
-    pRequest->send(LittleFS, "schedule.txt", "text/plain");
+    pRequest->send(LittleFS, schedule_file, "text/plain");
   });
   // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
   webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
@@ -376,7 +374,7 @@ void InitLittleFS()
   delay(1000);
 
   // sanity check
-  File testFile = LittleFS.open("test.txt", "r");
+  File testFile = LittleFS.open("/test.txt", "r");
   if (!testFile)
   {
     Serial.println("Test File Missing Or Can't Be Opened");
@@ -396,7 +394,7 @@ void ReadSchedule()
 {
   int c = 0;
   memset(scheduleArray, 0, sizeof(scheduleArray));
-  File scheduleFile = LittleFS.open("schedule.txt", "r");
+  File scheduleFile = LittleFS.open(schedule_file, "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -409,12 +407,14 @@ void ReadSchedule()
     {
       break;
     }
-    scheduleArray[c].id = scheduleDoc["id"].as<int>();
+    Serial.println("schedule id from file = " + String(scheduleDoc["id"]));
+    scheduleArray[c].id = scheduleDoc["id"].as<long long>();
+    Serial.println("schedule id in array = " + String(scheduleArray[c].id));
     scheduleArray[c].mode = scheduleDoc["mode"].as<int>();
     scheduleArray[c].startTime = scheduleDoc["startTime"].as<time_t>() + gmt_offset;
     scheduleArray[c].duration = scheduleDoc["duration"].as<uint16_t>();
     scheduleArray[c].interval = scheduleDoc["interval"].as<uint16_t>();
-    scheduleArray[c].interval = scheduleDoc["intervalUnit"].as<int>();
+    scheduleArray[c].intervalUnit = scheduleDoc["intervalUnit"].as<int>();
     c++;
   }
   scheduleFile.close();
@@ -424,7 +424,7 @@ void ReadSchedule()
   {
     if (scheduleArray[i].startTime)
     {
-      Serial.println(String(scheduleArray[i].mode) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
+      Serial.println(String(scheduleArray[i].id) + "===" + String(scheduleArray[i].mode) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
     }
   }
 }
@@ -510,38 +510,47 @@ int GetClosestSchedule()
   {
     for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
     {
-      if (scheduleArray[i].startTime != NULL && scheduleArray[i].startTime < scheduleArray[closestSchedule].startTime)      
+      if (scheduleArray[i].startTime != 0 && scheduleArray[i].startTime < scheduleArray[closestSchedule].startTime)      
       {
         closestSchedule = i;
       }
     }
     Serial.println("Closest Schedule : ");
-    Serial.println(String(closestSchedule) + "|||" + String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
+    Serial.println(String(scheduleArray[closestSchedule].id) + "|||" + String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
     return closestSchedule;
   }
   else
   {
     Serial.println("No Schedule");
-    return NULL;
+    return -1;
   }
 }
 
 
 void SetAlarm()
 {
-  int closestSchedule = GetClosestSchedule();
-
-  // set start time to alarm2
-  DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
-  char buffer[] = "YYYY/MM/DD hh:mm:ss";
-  Serial.println(startTime.toString(buffer));
-  rtc.setAlarm2(startTime, DS3231_A2_Date);
-  delay(10);
-  rtc.clearAlarm(2);
-
-  if (scheduleArray[closestSchedule].mode != 2)
+  if (scheduleArray != NULL)
   {
-    SetAlarmDuration(closestSchedule);
+    int closestSchedule = GetClosestSchedule();
+
+    // set start time to alarm2
+    DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
+    char buffer[] = "YYYY/MM/DD hh:mm:ss";
+    Serial.println(startTime.toString(buffer));
+    rtc.setAlarm2(startTime, DS3231_A2_Date);
+    delay(10);
+    rtc.clearAlarm(2);
+
+    if (scheduleArray[closestSchedule].mode != 2)
+    {
+      SetAlarmDuration(closestSchedule);
+    }
+  }
+  else
+  {
+    rtc.clearAlarm(1);
+    rtc.clearAlarm(2);
+    Serial.println("No Schedule, Alarm Cleared");
   }
 }
 

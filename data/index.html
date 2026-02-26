@@ -211,7 +211,7 @@
                 const seconds = Number(scheduleForm.elements["input_duration_second"].value);
                 const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  // merge day, hour, minute and second into total duration
                 const scheduleObj = {
-                    id: Date.now().toString(),
+                    id: Math.floor(Date.now() / 1000).toString(),   // convert the current epoch from millisecond to second
                     mode: scheduleForm.elements["input_mode"].value,
                     startTime: epochTime.toString(),
                     duration: durationTotal.toString(),
