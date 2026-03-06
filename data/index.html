@@ -55,14 +55,6 @@
                 </div>
 
                 <form id="schedule_form" onsubmit="return OnSubmitForm();">   <!-- prevent browser from reloading -->
-                    <!-- Mode -->
-                    <div style="margin-bottom:5px;">Mode</div>
-                    <select id="input_mode" onChange="ToggleMode()" style="width:50%; padding:10px;">
-                        <option value="0">Once</option>     
-                        <option value="1">Repeat</option>
-                        <option value="2">Always Active</option>
-                    </select>
-
                     <!-- Start Date -->
                     <div style="margin-top:20px; margin-bottom:5px;">Date</div>
                     <input id="input_date" type="date" required="true" style="width:90%; padding:8px;">
@@ -90,10 +82,10 @@
                         <table style="width:100%; border-collapse:collapse;">
                             <tr>
                                 <td style="width:50%;">
-                                    <input id="input_interval" type="number" min="1" required="true" disabled="true" style="width:80%; padding:10px;">
+                                    <input id="input_interval" type="number" min="1" required="true" disabled="false" style="width:80%; padding:10px;">
                                 </td>
                                 <td style="width:50%;">
-                                    <select id="input_interval_unit" disabled="true" style="width:80%; padding:10px;">
+                                    <select id="input_interval_unit" disabled="false" style="width:80%; padding:10px;">
                                         <option value="0">Minutes</option>
                                         <option value="1">Hours</option>
                                         <option value="2">Days</option>
@@ -143,61 +135,6 @@
             }
 
 
-            function ToggleMode()
-            {
-                const mode = document.getElementById("input_mode").value;
-                const inputInterval = document.getElementById("input_interval");
-                const inputIntervalUnit = document.getElementById("input_interval_unit");
-                const scheduleForm = document.getElementById("schedule_form");      // only document got .getElemetById()
-                const durationDay = scheduleForm.elements["input_duration_day"];    // only form got .elements
-                const durationHour = scheduleForm.elements["input_duration_hour"];
-                const durationMinute = scheduleForm.elements["input_duration_minute"];
-                const durationSecond = scheduleForm.elements["input_duration_second"];
-                // 0 (Once), 1 (Repeat), 2 (Always Active)
-                switch (mode)
-                {
-                    case "0":
-                        inputInterval.disabled = true;
-                        inputIntervalUnit.disabled = true;
-                        durationDay.required = true;
-                        durationDay.disabled = false;
-                        durationHour.required = true;
-                        durationHour.disabled = false;
-                        durationMinute.required = true;
-                        durationMinute.disabled = false;
-                        durationSecond.required = true;
-                        durationSecond.disabled = false;
-                        break;
-                    case "1": 
-                        inputInterval.disabled = false;
-                        inputIntervalUnit.disabled = false;
-                        durationDay.required = true;
-                        durationDay.disabled = false;
-                        durationHour.required = true;
-                        durationHour.disabled = false;
-                        durationMinute.required = true;
-                        durationMinute.disabled = false;
-                        durationSecond.required = true;
-                        durationSecond.disabled = false;
-                        break;
-                    case "2": 
-                        inputInterval.disabled = true;
-                        inputIntervalUnit.disabled = true;
-                        durationDay.required = false;
-                        durationDay.disabled = true;
-                        durationHour.required = false;
-                        durationHour.disabled = true;
-                        durationMinute.required = false;
-                        durationMinute.disabled = true;
-                        durationSecond.required = false;
-                        durationSecond.disabled = true;
-                        break;
-                    default:
-                        console.log("ToogleMode: invalid mode!");
-                }
-            }
-
-
             function OnSubmitForm()
             {
                 const scheduleForm = document.getElementById("schedule_form");
@@ -212,7 +149,7 @@
                 const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  // merge day, hour, minute and second into total duration
                 const scheduleObj = {
                     id: Math.floor(Date.now() / 1000).toString(),   // convert the current epoch from millisecond to second
-                    mode: scheduleForm.elements["input_mode"].value,
+                    mode: "1",
                     startTime: epochTime.toString(),
                     duration: durationTotal.toString(),
                     interval: scheduleForm.elements["input_interval"].value,
@@ -264,9 +201,7 @@
                 const time = `${hour}:${minute}`;
 
                 const modeMap = {
-                    "0": "Once",
-                    "1": "Repeat",
-                    "2": "Always Active"
+                    "1": "Repeat"
                 };
                 const intervalUnitMap = {
                     "0": "Minutes",
@@ -275,26 +210,10 @@
                     "3": "Weeks"
                 }
                 clone.querySelector(".Mode").innerText = modeMap[scheduleObj.mode] || "Unknown";
-                switch (scheduleObj.mode)
-                {
-                    case "0":
-                        clone.querySelector("#duration_placeholder").style.display = "block";
-                        clone.querySelector("#interval_placeholder").style.display = "none";
-                        clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";
-                        break;
-                    case "1": 
-                        clone.querySelector("#duration_placeholder").style.display = "block";
-                        clone.querySelector("#interval_placeholder").style.display = "block";
-                        clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";
-                        clone.querySelector(".Interval").innerText = scheduleObj.interval + " " + (intervalUnitMap[scheduleObj.intervalUnit] || "Unknown");
-                        break;
-                    case "2":
-                        clone.querySelector("#duration_placeholder").style.display = "none";
-                        clone.querySelector("#interval_placeholder").style.display = "none";
-                        break;
-                    default: 
-                        console.log("AddSchedule: invalid mode!");
-                }
+                clone.querySelector("#duration_placeholder").style.display = "block";
+                clone.querySelector("#interval_placeholder").style.display = "block";
+                clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";
+                clone.querySelector(".Interval").innerText = scheduleObj.interval + " " + (intervalUnitMap[scheduleObj.intervalUnit] || "Unknown");
                 clone.querySelector(".Date").innerText = date;
                 clone.querySelector(".Time").innerText = time;
                 clone.style.display = "block";

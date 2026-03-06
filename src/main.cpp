@@ -541,10 +541,7 @@ void SetAlarm()
     delay(10);
     rtc.clearAlarm(2);
 
-    if (scheduleArray[closestSchedule].mode != 2)
-    {
-      SetAlarmDuration(closestSchedule);
-    }
+    SetAlarmDuration(closestSchedule);
   }
   else
   {
@@ -700,34 +697,25 @@ void ScheduleTask(void* pvParams)
 
 void AfterScheduleHandle(int closestSchedule)
 {
-  // 0 (Once), 1 (Repeat), 2 (Always Active)
-  if (scheduleArray[closestSchedule].mode == 0)
+  RemoveSchedule(scheduleArray[closestSchedule].id);
+  int interval;
+  // 0 (minutes), 1 (hours), 2 (days)
+  switch (scheduleArray[closestSchedule].intervalUnit)
   {
-    RemoveSchedule(scheduleArray[closestSchedule].id);
-    return;
+    case 0:
+      interval = scheduleArray[closestSchedule].interval * 60;
+      break;
+    case 1:
+      interval = scheduleArray[closestSchedule].interval * 3600;
+      break;
+    case 2:
+      interval = scheduleArray[closestSchedule].interval * 24 * 3600;
+      break;
+    default:
+      break;
   }
-  else if (scheduleArray[closestSchedule].mode == 1)
-  {
-    RemoveSchedule(scheduleArray[closestSchedule].id);
-    int interval;
-    // 0 (minutes), 1 (hours), 2 (days)
-    switch (scheduleArray[closestSchedule].intervalUnit)
-    {
-      case 0:
-        interval = scheduleArray[closestSchedule].interval * 60;
-        break;
-      case 1:
-        interval = scheduleArray[closestSchedule].interval * 3600;
-        break;
-      case 2:
-        interval = scheduleArray[closestSchedule].interval * 24 * 3600;
-        break;
-      default:
-        break;
-    }
-    scheduleArray[closestSchedule].startTime += (scheduleArray[closestSchedule].duration + interval);
-    AddSchedule(scheduleArray[closestSchedule]);
-  }
+  scheduleArray[closestSchedule].startTime += (scheduleArray[closestSchedule].duration + interval);
+  AddSchedule(scheduleArray[closestSchedule]);
 }
 
 // Test Functions =====================================================
