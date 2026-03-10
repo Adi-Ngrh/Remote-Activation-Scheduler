@@ -15,8 +15,7 @@
         </div>
         
         <!-- Schedule Panel Template -->
-        <div id="schedule_template" class="Schedule" data-mode="" data-date="" data-startTime="" data-duration="" data-interval="" style="display:none; border:1px solid rgb(80,80,80); background: rgb(10,10,10); padding:10px; margin-bottom:10px;">  
-            <div style="margin-bottom:6px;">Mode: <b class="Mode"></b></div>
+        <div id="schedule_template" class="Schedule" data-date="" data-startTime="" data-duration="" data-interval="" style="display:none; border:1px solid rgb(80,80,80); background: rgb(10,10,10); padding:10px; margin-bottom:10px;">
             <div style="margin-bottom:6px;">Date: <b class="Date"></b></div>
             <div style="margin-bottom:6px;">Time: <b class="Time"></b></div>
             <div id="duration_placeholder" style="display:block; margin-bottom:8px;">Duration: <b class="Duration"></b></div>
@@ -67,13 +66,13 @@
                     <div style="margin-top:20px; margin-bottom:20px;">
                         <!-- custom validity wont be cleared automatically, once triggered will always occur. clear it manually outside of submit -->
                         <div style="margin-top:20px; margin-bottom:5px;">Duration (Days)</div>
-                        <input id="input_duration_day" type="number" min="0" required="true" disabled="false" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
+                        <input id="input_duration_day" type="number" min="0" required="true" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
                         <div style="margin-top:5px; margin-bottom:5px;">Duration (Hours)</div>
-                        <input id="input_duration_hour" type="number" min="0" required="true" disabled="false" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
+                        <input id="input_duration_hour" type="number" min="0" required="true" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
                         <div style="margin-top:5px; margin-bottom:5px;">Duration (Minutes)</div>
-                        <input id="input_duration_minute" type="number" min="0" required="true" disabled="false" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
+                        <input id="input_duration_minute" type="number" min="0" required="true" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
                         <div style="margin-top:5px; margin-bottom:5px;">Duration (Seconds)</div>
-                        <input id="input_duration_second" type="number" min="0" required="true" disabled="false" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
+                        <input id="input_duration_second" type="number" min="0" required="true" oninput="ClearCustomValidity()" style="width:90%; padding:8px;">
                     </div>
 
                     <!-- Interval -->
@@ -82,10 +81,10 @@
                         <table style="width:100%; border-collapse:collapse;">
                             <tr>
                                 <td style="width:50%;">
-                                    <input id="input_interval" type="number" min="1" required="true" disabled="false" style="width:80%; padding:10px;">
+                                    <input id="input_interval" type="number" min="1" required="true" style="width:80%; padding:10px;">
                                 </td>
                                 <td style="width:50%;">
-                                    <select id="input_interval_unit" disabled="false" style="width:80%; padding:10px;">
+                                    <select id="input_interval_unit" style="width:80%; padding:10px;">
                                         <option value="0">Minutes</option>
                                         <option value="1">Hours</option>
                                         <option value="2">Days</option>
@@ -149,7 +148,6 @@
                 const durationTotal = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;  // merge day, hour, minute and second into total duration
                 const scheduleObj = {
                     id: Math.floor(Date.now() / 1000).toString(),   // convert the current epoch from millisecond to second
-                    mode: "1",
                     startTime: epochTime.toString(),
                     duration: durationTotal.toString(),
                     interval: scheduleForm.elements["input_interval"].value,
@@ -200,16 +198,12 @@
                 const minute = String(dateTime.getMinutes()).padStart(2, '0');
                 const time = `${hour}:${minute}`;
 
-                const modeMap = {
-                    "1": "Repeat"
-                };
                 const intervalUnitMap = {
                     "0": "Minutes",
                     "1": "Hours",
                     "2": "Days",
                     "3": "Weeks"
                 }
-                clone.querySelector(".Mode").innerText = modeMap[scheduleObj.mode] || "Unknown";
                 clone.querySelector("#duration_placeholder").style.display = "block";
                 clone.querySelector("#interval_placeholder").style.display = "block";
                 clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";

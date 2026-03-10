@@ -16,7 +16,6 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 
 
 // to do :
-//  - implement month and year checking for the schedule.
 //  - evaluate wether state manager task is needed or should be completely replaced by schedule task
 // on repeat mode, new schedule with new start time isnt being added properly
 #define SCHEDULE_ARRAY_SIZE 50
@@ -76,7 +75,6 @@ typedef enum{
 
 struct Schedule{
   long long id;   // use 64 bit number to avoid overflow in 2038
-  int mode;
   time_t startTime;
   uint16_t duration;
   uint16_t interval;
@@ -226,8 +224,7 @@ void StoreSchedule(AsyncWebServerRequest* pRequest)
 void AddSchedule(Schedule s)
 {
   JsonDocument doc;
-  doc["id"]           = String(s.id); 
-  doc["mode"]         = String(s.mode);
+  doc["id"]           = String(s.id);
   doc["startTime"]    = String(s.startTime);
   doc["duration"]     = String(s.duration);
   doc["interval"]     = String(s.interval);
@@ -410,7 +407,6 @@ void ReadSchedule()
     Serial.println("schedule id from file = " + String(scheduleDoc["id"]));
     scheduleArray[c].id = scheduleDoc["id"].as<long long>();
     Serial.println("schedule id in array = " + String(scheduleArray[c].id));
-    scheduleArray[c].mode = scheduleDoc["mode"].as<int>();
     scheduleArray[c].startTime = scheduleDoc["startTime"].as<time_t>() + gmt_offset;
     scheduleArray[c].duration = scheduleDoc["duration"].as<uint16_t>();
     scheduleArray[c].interval = scheduleDoc["interval"].as<uint16_t>();
@@ -424,7 +420,7 @@ void ReadSchedule()
   {
     if (scheduleArray[i].startTime)
     {
-      Serial.println(String(scheduleArray[i].id) + "===" + String(scheduleArray[i].mode) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
+      Serial.println(String(scheduleArray[i].id) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
     }
   }
 }
@@ -516,7 +512,7 @@ int GetClosestSchedule()
       }
     }
     Serial.println("Closest Schedule : ");
-    Serial.println(String(scheduleArray[closestSchedule].id) + "|||" + String(scheduleArray[closestSchedule].mode) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
+    Serial.println(String(scheduleArray[closestSchedule].id) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
     return closestSchedule;
   }
   else
@@ -672,22 +668,39 @@ void ScheduleTask(void* pvParams)
       
       if (notifValue & ALARM_TRIGGERED)
       {
+        int closestSchedule = GetClosestSchedule();
+        DateTime scheduled = DateTime(scheduleArray[closestSchedule].startTime);
+        DateTime now = rtc.now();
+
         if (rtc.alarmFired(2))
         {
-          TurnOnDevice();
-          Serial.println("Device Turned On");
+          if (now.year() == scheduled.year() && now.month() == scheduled.month())
+          {
+            TurnOnDevice();
+            Serial.println("Device Turned On");
+          }
+          else
+          {
+            Serial.println("Alarm 2 fired: month/year mismatch, skipping activation");
+          }
           rtc.clearAlarm(2);
         }
         else if (rtc.alarmFired(1))
         {
-          TurnOffDevice();
-          Serial.println("Device Turned Off");
+          if (now.year() == scheduled.year() && now.month() == scheduled.month())
+          {
+            TurnOffDevice();
+            Serial.println("Device Turned Off");
+            Serial.println(scheduleArray[closestSchedule].id);
+            AfterScheduleHandle(closestSchedule);
+            ReadSchedule();
+            SetAlarm();
+          }
+          else
+          {
+            Serial.println("Alarm 1 fired: month/year mismatch, skipping");
+          }
           rtc.clearAlarm(1);
-          int closestSchedule = GetClosestSchedule();
-          Serial.println(scheduleArray[closestSchedule].id);
-          AfterScheduleHandle(closestSchedule);
-          ReadSchedule();
-          SetAlarm();
         }
       }
     }
