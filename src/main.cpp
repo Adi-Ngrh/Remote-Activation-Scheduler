@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include "optional"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "LittleFS.h"       // for using littleFS file system on esp32
@@ -15,19 +14,20 @@
 static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use of c++17
 
 
-// to do :
-//  - evaluate wether state manager task is needed or should be completely replaced by schedule task
-// on repeat mode, new schedule with new start time isnt being added properly
 #define SCHEDULE_ARRAY_SIZE 50
+#define BUFFER_SIZE 200
+
 TaskHandle_t StateManagerTaskHandle = NULL;
 TaskHandle_t ScheduleTaskHandle = NULL;
+QueueHandle_t requestQueue;
+Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
 // WiFi & website related variables
 // ensure WiFi use 2,4 GHz and use WPA2 for compatibility
 const char* wifi_ssid = "punya orang";
 const char* wifi_password = "b57aigqs";
+char receivedData[BUFFER_SIZE];
 AsyncWebServer webServer(80);
-String receivedData = "";
 HTTPClient http;
 
 // NTP related variables
@@ -50,14 +50,7 @@ const uint8_t rtc_addr = 0x68;
 
 // Device related variables
 const uint8_t devicePin = 16;
-bool isDeviceActive = false;
 
-typedef enum {
-  STATE_IDLE,
-  STATE_ACTIVE,
-  STATE_CONFIG,
-  STATE_ERROR
-} state_enum;
 typedef enum{
   EVENT_DEVICE_ON,
   EVENT_DEVICE_OFF,
@@ -82,12 +75,7 @@ struct Schedule{
 };
 struct Request{
   event_enum eventCategory;
-  std::optional<Schedule> schedule;
 };
-
-QueueHandle_t requestQueue;
-QueueHandle_t responseQueue;
-Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
 
 // WiFi related functions
@@ -134,12 +122,6 @@ void setup()
   if (requestQueue == NULL)
   {
     Serial.println("Request Queue Failed!");
-  }
-
-  responseQueue = xQueueCreate(1, sizeof(state_enum));
-  if (responseQueue == NULL)
-  {
-    Serial.println("Response Queue Failed!");
   }
 
   xTaskCreatePinnedToCore(
@@ -191,6 +173,7 @@ void InitWifi()
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest)
 {
+  Serial.println("Data received from website : " + String(receivedData));
   File scheduleFile = LittleFS.open(schedule_file, "a");
   if (!scheduleFile)
   {
@@ -243,8 +226,8 @@ void AddSchedule(Schedule s)
 
 void DeleteSchedule(AsyncWebServerRequest* pRequest)
 {
-  receivedData.replace("\"", ""); // get rid of literal quote (\") being sent by JSON.stringify()
-  int status = RemoveSchedule(strtoll(receivedData.c_str(), NULL, 10));
+  
+  int status = RemoveSchedule(strtoll(receivedData, NULL, 10));
   switch (status)
   {
     case -1:
@@ -314,14 +297,23 @@ int RemoveSchedule(long long idToDelete)
 
 void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, size_t index, size_t total)
 {
+  if (total >= BUFFER_SIZE) {
+      Serial.println("Data from website is too large");
+      return; 
+  }
   if (index == 0)
   {
-    receivedData = "";
-    receivedData.reserve(total);
+    // make sure buffer is cleared
+    memset(receivedData, 0, BUFFER_SIZE);
   }
-  for (size_t i = 0; i < len; i++)
+  if (index + len < BUFFER_SIZE)
   {
-    receivedData += (char)pData[i];
+    memcpy(receivedData + index, pData, len);
+    if (index + len == total)
+    {
+      receivedData[total] = '\0';
+      Serial.println("Data chunk received : " + String(receivedData));
+    }
   }
 }
 
@@ -579,71 +571,15 @@ void IRAM_ATTR onAlarmISR()
 // Device related functions
 void TurnOnDevice()
 {
-  isDeviceActive = true;
   digitalWrite(16, HIGH);
 }
 
 void TurnOffDevice()
 {
-  isDeviceActive = false;
   digitalWrite(16, LOW);
 } 
 
 
-// Handle program state transition based on event value on Request struct
-void StateManagerTask(void* pvParams)
-{
-  state_enum currentState = STATE_IDLE;
-  Request request;
-
-  while (true)
-  {
-    if (xQueueReceive(requestQueue, &request, portMAX_DELAY))
-    {
-      switch (request.eventCategory)
-      {
-        case EVENT_DEVICE_ON :
-          // call function to turn on device
-          TurnOnDevice();
-          currentState = STATE_ACTIVE;
-          break;
-
-        case EVENT_DEVICE_OFF :
-          // call function to turn off device
-          TurnOffDevice();
-          currentState = STATE_IDLE;
-          break;
-
-        case EVENT_DEVICE_FAIL :
-          // call function to handle runtime device failure
-          currentState = STATE_ERROR;
-          break;
-
-        case EVENT_WIFI_DISCONNECT :
-          // call function to handle runtime wifi disconnect
-          currentState = STATE_ERROR;
-          break;
-
-        case EVENT_NTP_FAIL :
-          // call function to handle runtime NTP failure
-          currentState = STATE_ERROR;
-          break;
-
-        case EVENT_RTC_FAIL :
-          // call function to handle runtime RTC failure
-          currentState = STATE_ERROR;
-          break;
-
-        case EVENT_ASK_STATE :
-          xQueueSend(responseQueue, &currentState, pdMS_TO_TICKS(500));
-          break;
-
-        default :
-          currentState = STATE_IDLE;
-      }
-    }
-  }
-}
 
 
 // Handle RTC alarm setting and time keeping
@@ -730,7 +666,3 @@ void AfterScheduleHandle(int closestSchedule)
   scheduleArray[closestSchedule].startTime += (scheduleArray[closestSchedule].duration + interval);
   AddSchedule(scheduleArray[closestSchedule]);
 }
-
-// Test Functions =====================================================
-
-// Test Functions End =====================================================
