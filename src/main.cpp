@@ -13,7 +13,6 @@
 #include "RTClib.h"         // for interacting with RS3231
 static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use of c++17
 
-
 #define SCHEDULE_ARRAY_SIZE 50
 #define BUFFER_SIZE 200
 
@@ -77,14 +76,13 @@ struct Request{
   event_enum eventCategory;
 };
 
-
 // WiFi related functions
 void InitWifi();
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest);
 void DeleteSchedule(AsyncWebServerRequest* pRequest);
 int RemoveSchedule(long long idToDelete);
-void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, size_t index, size_t total);
+void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total);
 void InitWebServer();
 // LittleFS related functions
 void InitLittleFS();
@@ -94,17 +92,17 @@ time_t ExtractStartTime(JsonDocument& doc);
 void InitNTP();
 // DS3231 related functions
 void InitRTC();
-int GetClosestSchedule();
 void SetAlarm();
-void SetAlarmDuration(int closestSchedule);
+void SetAlarmDuration(int ClosestScheduleIndex);
 void IRAM_ATTR onAlarmISR();
 // Device related functions
 void TurnOnDevice();
 void TurnOffDevice();
-void StateManagerTask(void* pvParams);
+// Utilities
+int GetClosestScheduleIndex();
+bool isScheduleArrayEmpty(const Schedule* scheduleArray);
 void ScheduleTask(void* pvParams);
-void AfterScheduleHandle(int closestSchedule);
-
+void AfterScheduleHandle(int ClosestScheduleIndex);
 
 void setup() 
 {
@@ -124,15 +122,6 @@ void setup()
     Serial.println("Request Queue Failed!");
   }
 
-  xTaskCreatePinnedToCore(
-    StateManagerTask,
-    "State Manager Task",
-    2048,
-    NULL,
-    1,
-    &StateManagerTaskHandle,
-    0
-  );
   xTaskCreatePinnedToCore(
     ScheduleTask,
     "Schedule Task",
@@ -203,7 +192,6 @@ void StoreSchedule(AsyncWebServerRequest* pRequest)
   xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
 }
 
-
 void AddSchedule(Schedule s)
 {
   JsonDocument doc;
@@ -222,7 +210,6 @@ void AddSchedule(Schedule s)
   serializeJson(doc, scheduleFile);
   scheduleFile.close();
 }
-
 
 void DeleteSchedule(AsyncWebServerRequest* pRequest)
 {
@@ -255,7 +242,6 @@ void DeleteSchedule(AsyncWebServerRequest* pRequest)
   xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
   xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
 }
-
 
 int RemoveSchedule(long long idToDelete)
 {
@@ -294,8 +280,7 @@ int RemoveSchedule(long long idToDelete)
   return 0;
 }
 
-
-void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, size_t index, size_t total)
+void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total)
 {
   if (total >= BUFFER_SIZE) {
       Serial.println("Data from website is too large");
@@ -316,7 +301,6 @@ void ReceiveData(AsyncWebServerRequest* pRequest, uint8_t* pData, size_t len, si
     }
   }
 }
-
 
 void InitWebServer()
 {
@@ -377,7 +361,6 @@ void InitLittleFS()
   testFile.close();
   delay(1000);
 }
-
 
 void ReadSchedule()
 {
@@ -490,60 +473,31 @@ void InitRTC()
   delay(1000);
 }
 
-
-int GetClosestSchedule()
-{
-  int closestSchedule = 0;
-  if (scheduleArray != NULL)
-  {
-    for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
-    {
-      if (scheduleArray[i].startTime != 0 && scheduleArray[i].startTime < scheduleArray[closestSchedule].startTime)      
-      {
-        closestSchedule = i;
-      }
-    }
-    Serial.println("Closest Schedule : ");
-    Serial.println(String(scheduleArray[closestSchedule].id) + "|||" + String(scheduleArray[closestSchedule].startTime) + "|||" + String(scheduleArray[closestSchedule].duration));
-    return closestSchedule;
-  }
-  else
-  {
-    Serial.println("No Schedule");
-    return -1;
-  }
-}
-
-
 void SetAlarm()
 {
-  if (scheduleArray != NULL)
-  {
-    int closestSchedule = GetClosestSchedule();
-
-    // set start time to alarm2
-    DateTime startTime = DateTime(scheduleArray[closestSchedule].startTime);
-    char buffer[] = "YYYY/MM/DD hh:mm:ss";
-    Serial.println(startTime.toString(buffer));
-    rtc.setAlarm2(startTime, DS3231_A2_Date);
-    delay(10);
-    rtc.clearAlarm(2);
-
-    SetAlarmDuration(closestSchedule);
-  }
-  else
+  if (isScheduleArrayEmpty(scheduleArray) == true)
   {
     rtc.clearAlarm(1);
     rtc.clearAlarm(2);
     Serial.println("No Schedule, Alarm Cleared");
   }
+  int ClosestScheduleIndex = GetClosestScheduleIndex();
+
+  // set start time to alarm2
+  DateTime startTime = DateTime(scheduleArray[ClosestScheduleIndex].startTime);
+  char buffer[] = "YYYY/MM/DD hh:mm:ss";
+  Serial.println(startTime.toString(buffer));
+  rtc.setAlarm2(startTime, DS3231_A2_Date);
+  delay(10);
+  rtc.clearAlarm(2);
+
+  SetAlarmDuration(ClosestScheduleIndex);
 }
 
-
-void SetAlarmDuration(int closestSchedule)
+void SetAlarmDuration(int ClosestScheduleIndex)
 {
   // set duration to alarm1
-  time_t finishTimeEpoch = scheduleArray[closestSchedule].startTime + scheduleArray[closestSchedule].duration;
+  time_t finishTimeEpoch = scheduleArray[ClosestScheduleIndex].startTime + scheduleArray[ClosestScheduleIndex].duration;
   DateTime finishTime = DateTime(finishTimeEpoch);
   char buffer2[] = "YYYY/MM/DD hh:mm:ss";
   Serial.println(finishTime.toString(buffer2));
@@ -551,7 +505,6 @@ void SetAlarmDuration(int closestSchedule)
   delay(10);
   rtc.clearAlarm(1);
 }
-
 
 void IRAM_ATTR onAlarmISR()
 {
@@ -580,7 +533,41 @@ void TurnOffDevice()
 } 
 
 
+//==========================================================================================//
 
+
+// Utility Functions
+
+int GetClosestScheduleIndex()
+{
+  if (isScheduleArrayEmpty(scheduleArray) == true)
+  {
+    return -1;
+  }
+  int ClosestScheduleIndex = 0;
+  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
+  {
+    if (scheduleArray[i].startTime != 0 && scheduleArray[i].startTime < scheduleArray[ClosestScheduleIndex].startTime)      
+    {
+      ClosestScheduleIndex = i;
+    }
+  }
+  Serial.println("Closest Schedule : ");
+  Serial.println(String(scheduleArray[ClosestScheduleIndex].id) + "|||" + String(scheduleArray[ClosestScheduleIndex].startTime) + "|||" + String(scheduleArray[ClosestScheduleIndex].duration));
+  return ClosestScheduleIndex;
+}
+
+bool isScheduleArrayEmpty(const Schedule* scheduleArray)
+{
+  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
+  {
+    if (scheduleArray[i].startTime != 0)
+    {
+      return false;
+    }
+  }
+  return true;
+}
 
 // Handle RTC alarm setting and time keeping
 void ScheduleTask(void* pvParams)
@@ -604,8 +591,8 @@ void ScheduleTask(void* pvParams)
       
       if (notifValue & ALARM_TRIGGERED)
       {
-        int closestSchedule = GetClosestSchedule();
-        DateTime scheduled = DateTime(scheduleArray[closestSchedule].startTime);
+        int ClosestScheduleIndex = GetClosestScheduleIndex();
+        DateTime scheduled = DateTime(scheduleArray[ClosestScheduleIndex].startTime);
         DateTime now = rtc.now();
 
         if (rtc.alarmFired(2))
@@ -627,8 +614,8 @@ void ScheduleTask(void* pvParams)
           {
             TurnOffDevice();
             Serial.println("Device Turned Off");
-            Serial.println(scheduleArray[closestSchedule].id);
-            AfterScheduleHandle(closestSchedule);
+            Serial.println(scheduleArray[ClosestScheduleIndex].id);
+            AfterScheduleHandle(ClosestScheduleIndex);
             ReadSchedule();
             SetAlarm();
           }
@@ -643,26 +630,26 @@ void ScheduleTask(void* pvParams)
   }
 }
 
-
-void AfterScheduleHandle(int closestSchedule)
+// Decide what to do after schedule is done
+void AfterScheduleHandle(int ClosestScheduleIndex)
 {
-  RemoveSchedule(scheduleArray[closestSchedule].id);
+  RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
   int interval;
   // 0 (minutes), 1 (hours), 2 (days)
-  switch (scheduleArray[closestSchedule].intervalUnit)
+  switch (scheduleArray[ClosestScheduleIndex].intervalUnit)
   {
     case 0:
-      interval = scheduleArray[closestSchedule].interval * 60;
+      interval = scheduleArray[ClosestScheduleIndex].interval * 60;
       break;
     case 1:
-      interval = scheduleArray[closestSchedule].interval * 3600;
+      interval = scheduleArray[ClosestScheduleIndex].interval * 3600;
       break;
     case 2:
-      interval = scheduleArray[closestSchedule].interval * 24 * 3600;
+      interval = scheduleArray[ClosestScheduleIndex].interval * 24 * 3600;
       break;
     default:
       break;
   }
-  scheduleArray[closestSchedule].startTime += (scheduleArray[closestSchedule].duration + interval);
-  AddSchedule(scheduleArray[closestSchedule]);
+  scheduleArray[ClosestScheduleIndex].startTime += (scheduleArray[ClosestScheduleIndex].duration + interval);
+  AddSchedule(scheduleArray[ClosestScheduleIndex]);
 }
