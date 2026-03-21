@@ -11,7 +11,7 @@
         <!-- Top content / status -->
         <div style="text-align:center; margin-bottom:24px;">
             <h3 style="margin:0;">Control Panel</h3>
-            <div style="color:rgb(160,160,160); font-size:14px;">Device Online</div>
+            <div id="device_status" style="color:rgb(160,160,160); font-size:14px;">Checking status...</div>
         </div>
         
         <!-- Schedule Panel Template -->
@@ -267,8 +267,34 @@
             }
 
 
+            function UpdateDeviceStatus()
+            {
+                fetch("/status")
+                    .then(response => response.text())
+                    .then(status => {
+                        const statusEl = document.getElementById("device_status");
+                        if (status === "on")
+                        {
+                            statusEl.style.color = "rgb(0,220,100)";
+                            statusEl.innerText = "Device ON";
+                        }
+                        else
+                        {
+                            statusEl.style.color = "rgb(160,160,160)";
+                            statusEl.innerText = "Device OFF";
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Status fetch error: ", error);
+                        document.getElementById("device_status").innerText = "Status Unknown";
+                    });
+            }
+
+
             document.addEventListener("DOMContentLoaded", function() {
                 ReceiveSchedule();
+                UpdateDeviceStatus();
+                setInterval(UpdateDeviceStatus, 5000);
             });
         </script>
     </body>

@@ -49,6 +49,7 @@ const uint8_t rtc_addr = 0x68;
 
 // Device related variables
 const uint8_t devicePin = 16;
+volatile bool deviceOn = false;
 
 typedef enum{
   EVENT_DEVICE_ON,
@@ -326,6 +327,10 @@ void InitWebServer()
   });
   // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
   webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
+  // GET /status : client ask for current device state, esp32 responds with "on" or "off"
+  webServer.on("/status", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
+    pRequest->send(200, "text/plain", deviceOn ? "on" : "off");
+  });
   webServer.begin();
   Serial.println("IP Address : " + WiFi.localIP().toString());
   delay(1000);
@@ -389,15 +394,6 @@ void ReadSchedule()
     c++;
   }
   scheduleFile.close();
-
-  // confirmation
-  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
-  {
-    if (scheduleArray[i].startTime)
-    {
-      Serial.println(String(scheduleArray[i].id) + "===" + String(scheduleArray[i].startTime) + "===" + String(scheduleArray[i].duration));
-    }
-  }
 }
 
 
@@ -524,12 +520,14 @@ void IRAM_ATTR onAlarmISR()
 // Device related functions
 void TurnOnDevice()
 {
-  digitalWrite(16, HIGH);
+  digitalWrite(devicePin, HIGH);
+  deviceOn = true;
 }
 
 void TurnOffDevice()
 {
-  digitalWrite(16, LOW);
+  digitalWrite(devicePin, LOW);
+  deviceOn = false;
 } 
 
 
