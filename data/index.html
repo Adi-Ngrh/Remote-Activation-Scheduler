@@ -8,6 +8,8 @@
     </head>
 
     <body style="margin:0; min-height:100vh; background: linear-gradient(to bottom,rgb(50,50,50),rgb(30,30,30)); font-family: monospace; color: rgb(220,220,220); padding:16px;">
+        <!-- Device status indicator -->
+        <div id="status_indicator" style="position:fixed; top:16px; right:16px; width:24px; height:24px; background:rgb(160,160,160); border:1px solid rgb(80,80,80);"></div>
         <!-- Top content / status -->
         <div style="text-align:center; margin-bottom:24px;">
             <h3 style="margin:0;">Control Panel</h3>
@@ -133,6 +135,16 @@
                 document.getElementById("overlay").style.display = "none";
             }
 
+            function GetIntervalSecond(interval, intervalUnit)
+            {
+                const unitSecondMap = {
+                    "0": 60,
+                    "1": 3600,
+                    "2": 86400
+                }
+                return interval * (unitSecondMap[intervalUnit] || 0);
+            }
+
 
             function OnSubmitForm()
             {
@@ -153,10 +165,25 @@
                     interval: scheduleForm.elements["input_interval"].value,
                     intervalUnit: scheduleForm.elements["input_interval_unit"].value
                 };
+
+                // Schedule Validation
+                if (Number(scheduleObj.startTime) < Math.floor(Date.now() / 1000))
+                {
+                    scheduleForm.elements["input_time"].setCustomValidity("Start Time Must Be In The Future");
+                }
                 if (Number(scheduleObj.duration) <= 0)
                 {
                     scheduleForm.elements["input_duration_second"].setCustomValidity("Duration Must Be Greater then 0 Second");
                 }
+                if (Number(scheduleObj.interval) <= 0)
+                {
+                    scheduleForm.elements["input_interval"].setCustomValidity("Interval Must Be Greater then 0");
+                }
+                if (Number(scheduleObj.duration) >= Number(GetIntervalSecond(scheduleObj.interval, scheduleObj.intervalUnit)))
+                {
+                    scheduleForm.elements["input_interval"].setCustomValidity("Interval Must Be Greater than Duration");
+                }
+
                 if(!scheduleForm.checkValidity())
                 {
                     scheduleForm.reportValidity(); 
@@ -172,6 +199,8 @@
             function ClearCustomValidity()
             {
                 document.getElementById("input_duration_second").setCustomValidity("");
+                document.getElementById("input_interval").setCustomValidity("");
+                document.getElementById("input_time").setCustomValidity("");
             }
 
 
@@ -267,34 +296,14 @@
             }
 
 
-            function UpdateDeviceStatus()
-            {
-                fetch("/status")
-                    .then(response => response.text())
-                    .then(status => {
-                        const statusEl = document.getElementById("device_status");
-                        if (status === "on")
-                        {
-                            statusEl.style.color = "rgb(0,220,100)";
-                            statusEl.innerText = "Device ON";
-                        }
-                        else
-                        {
-                            statusEl.style.color = "rgb(160,160,160)";
-                            statusEl.innerText = "Device OFF";
-                        }
-                    })
-                    .catch(error => {
-                        console.error("Status fetch error: ", error);
-                        document.getElementById("device_status").innerText = "Status Unknown";
-                    });
-            }
-
-
             document.addEventListener("DOMContentLoaded", function() {
                 ReceiveSchedule();
-                UpdateDeviceStatus();
-                setInterval(UpdateDeviceStatus, 5000);
+                const eventSource = new EventSource("/events");
+                eventSource.addEventListener("status", function(e) {
+                    const isOn = e.data === "true";
+                    document.getElementById("status_indicator").style.background = isOn ? "rgb(0,200,80)" : "rgb(200,50,50)";
+                    document.getElementById("device_status").innerText = isOn ? "Device ON" : "Device OFF";
+                });
             });
         </script>
     </body>

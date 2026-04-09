@@ -16,6 +16,34 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 #define SCHEDULE_ARRAY_SIZE 50
 #define BUFFER_SIZE 200
 
+typedef enum{
+  EVENT_DEVICE_ON,
+  EVENT_DEVICE_OFF,
+  EVENT_DEVICE_FAIL,
+  EVENT_WIFI_DISCONNECT,
+  EVENT_NTP_FAIL,
+  EVENT_RTC_FAIL,
+  EVENT_ASK_STATE
+} event_enum;
+
+typedef enum{
+  NOTIFY_SCHEDULE_READ = 0b0001,
+  NOTIFY_SCHEDULE_SET_ALARM = 0b0010,
+  ALARM_TRIGGERED = 0b0100  // important: due to bitwise accumulation, make sure each value has unique bit that is set (ex: dont use 0b0011 when 0b0001 and 0b0010 exist)
+} scheduleTask_enum;
+
+struct Schedule{
+  long long id;   // use 64 bit number to avoid overflow in 2038
+  time_t startTime;
+  uint16_t duration;
+  uint16_t interval;
+  int intervalUnit;
+};
+
+struct Request{
+  event_enum eventCategory;
+};
+
 TaskHandle_t StateManagerTaskHandle = NULL;
 TaskHandle_t ScheduleTaskHandle = NULL;
 QueueHandle_t requestQueue;
@@ -27,6 +55,7 @@ const char* wifi_ssid = "punya orang";
 const char* wifi_password = "b57aigqs";
 char receivedData[BUFFER_SIZE];
 AsyncWebServer webServer(80);
+AsyncEventSource events("/events");
 HTTPClient http;
 
 // NTP related variables
@@ -51,148 +80,43 @@ const uint8_t rtc_addr = 0x68;
 const uint8_t devicePin = 16;
 volatile bool deviceOn = false;
 
-typedef enum{
-  EVENT_DEVICE_ON,
-  EVENT_DEVICE_OFF,
-  EVENT_DEVICE_FAIL,
-  EVENT_WIFI_DISCONNECT,
-  EVENT_NTP_FAIL,
-  EVENT_RTC_FAIL,
-  EVENT_ASK_STATE
-} event_enum;
-typedef enum{
-  NOTIFY_SCHEDULE_READ = 0b0001,
-  NOTIFY_SCHEDULE_SET_ALARM = 0b0010,
-  ALARM_TRIGGERED = 0b0100  // important: due to bitwise accumulation, make sure each value has unique bit that is set (ex: dont use 0b0011 when 0b0001 and 0b0010 exist)
-} scheduleTask_enum;
 
-struct Schedule{
-  long long id;   // use 64 bit number to avoid overflow in 2038
-  time_t startTime;
-  uint16_t duration;
-  uint16_t interval;
-  int intervalUnit;
-};
-struct Request{
-  event_enum eventCategory;
-};
+bool isScheduleArrayEmpty(const Schedule* scheduleArray)
+{
+  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
+  {
+    if (scheduleArray[i].startTime != 0)
+    {
+      return false;
+    }
+  }
+  return true;
+}
 
-// WiFi related functions
-void InitWifi();
-// WebServer related functions
-void StoreSchedule(AsyncWebServerRequest* pRequest);
-void DeleteSchedule(AsyncWebServerRequest* pRequest);
-int RemoveSchedule(long long idToDelete);
-void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total);
-void InitWebServer();
-// LittleFS related functions
-void InitLittleFS();
-void ReadSchedule();
-time_t ExtractStartTime(JsonDocument& doc);
-// NTP related functions
-void InitNTP();
-// DS3231 related functions
-void InitRTC();
-void SetAlarm();
-void SetAlarmDuration(int ClosestScheduleIndex);
-void IRAM_ATTR onAlarmISR();
+
+//==========================================================================================//
+
+
 // Device related functions
-void TurnOnDevice();
-void TurnOffDevice();
-// Utilities
-int GetClosestScheduleIndex();
-bool isScheduleArrayEmpty(const Schedule* scheduleArray);
-void ScheduleTask(void* pvParams);
-void AfterScheduleHandle(int ClosestScheduleIndex);
-
-void setup() 
+void TurnOnDevice()
 {
-  Serial.begin(115200);
-  InitWifi();
-  InitLittleFS();
-  InitNTP();
-  InitRTC();
-  InitWebServer();
-  pinMode(devicePin, OUTPUT);
-  pinMode(sqw_pin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(sqw_pin), onAlarmISR, FALLING);
-
-  requestQueue = xQueueCreate(1, sizeof(Request));
-  if (requestQueue == NULL)
-  {
-    Serial.println("Request Queue Failed!");
-  }
-
-  xTaskCreatePinnedToCore(
-    ScheduleTask,
-    "Schedule Task",
-    4096,
-    NULL,
-    1,
-    &ScheduleTaskHandle,
-    1
-  );
+  digitalWrite(devicePin, HIGH);
+  deviceOn = true;
+  events.send("true", "status", millis());
 }
 
-void loop() 
-{ 
-}
+void TurnOffDevice()
+{
+  digitalWrite(devicePin, LOW);
+  deviceOn = false;
+  events.send("false", "status", millis());
+} 
 
 
 //==========================================================================================//
 
 
-// WiFi related functions
-void InitWifi()
-{
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifi_ssid, wifi_password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.println(String(WiFi.status()));
-    delay(1000);
-  }
-  Serial.println("Connected to : " + String(wifi_ssid));
-  delay(1000);
-}
-
-
-//==========================================================================================//
-
-
-// WebServer related functions
-void StoreSchedule(AsyncWebServerRequest* pRequest)
-{
-  Serial.println("Data received from website : " + String(receivedData));
-  File scheduleFile = LittleFS.open(schedule_file, "a");
-  if (!scheduleFile)
-  {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    pRequest->send(404, "text/plain", "schedule file is missing!");
-    return;
-  }
-  scheduleFile.println(receivedData);
-  scheduleFile.close();
-
-  // confirmation
-  scheduleFile = LittleFS.open(schedule_file, "r");
-  if (!scheduleFile)
-  {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    return;
-  }
-  Serial.println("FILE START (store)");
-  while (scheduleFile.available())
-  {
-    Serial.println(scheduleFile.readStringUntil('\n'));
-  }
-  Serial.println("FILE END (store)");
-  scheduleFile.close();
-  pRequest->send(200, "text/plain", "schedule is sent and stored!");
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
-}
-
+// LittleFS schedule read/write functions
 void AddSchedule(Schedule s)
 {
   JsonDocument doc;
@@ -210,38 +134,6 @@ void AddSchedule(Schedule s)
   }
   serializeJson(doc, scheduleFile);
   scheduleFile.close();
-}
-
-void DeleteSchedule(AsyncWebServerRequest* pRequest)
-{
-  
-  int status = RemoveSchedule(strtoll(receivedData, NULL, 10));
-  switch (status)
-  {
-    case -1:
-      pRequest->send(404, "text/plain", "file cant be opened!");
-      break;
-    default:
-      break;
-  }
-
-  // confirmation
-  File scheduleFile = LittleFS.open(schedule_file, "r");
-  if (!scheduleFile)
-  {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    return;
-  }
-  Serial.println("FILE START (delete)");
-  while (scheduleFile.available())
-  {
-    Serial.println(scheduleFile.readStringUntil('\n'));
-  }
-  Serial.println("FILE END (delete)");
-  scheduleFile.close();
-  pRequest->send(200, "text/plain", "schedule is deleted!");
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
 }
 
 int RemoveSchedule(long long idToDelete)
@@ -266,7 +158,7 @@ int RemoveSchedule(long long idToDelete)
     {
       break;  
     }
-    if (scheduleDoc["id"].as<long long>() != idToDelete)
+    if (strtoll(scheduleDoc["id"].as<const char*>(), NULL, 10) != idToDelete)
     {
       String scheduleString;
       serializeJson(scheduleDoc, scheduleString);
@@ -281,6 +173,11 @@ int RemoveSchedule(long long idToDelete)
   return 0;
 }
 
+
+//==========================================================================================//
+
+
+// WebServer body handler
 void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total)
 {
   if (total >= BUFFER_SIZE) {
@@ -303,36 +200,21 @@ void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t l
   }
 }
 
-void InitWebServer()
+
+//==========================================================================================//
+
+
+// WiFi related functions
+void InitWifi()
 {
-  // GET / : client ask to display web page, esp32 respond by sending html file
-  webServer.on("/", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists(web_file))
-    {
-      pRequest->send(404, "text/plain");
-      return; 
-    }
-    pRequest->send(LittleFS, web_file, "text/html");
-  });
-  // POST /upload : client send schedule data, esp32 respond with handlers to store it
-  webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveData); // onRequest run after data fully transferred, onUpload and onBody run during transfer
-  // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
-  webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists(schedule_file))
-    {
-      pRequest->send(404, "application/json", "[]");
-      return;
-    }
-    pRequest->send(LittleFS, schedule_file, "text/plain");
-  });
-  // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
-  webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
-  // GET /status : client ask for current device state, esp32 responds with "on" or "off"
-  webServer.on("/status", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    pRequest->send(200, "text/plain", deviceOn ? "on" : "off");
-  });
-  webServer.begin();
-  Serial.println("IP Address : " + WiFi.localIP().toString());
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifi_ssid, wifi_password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println(String(WiFi.status()));
+    delay(1000);
+  }
+  Serial.println("Connected to : " + String(wifi_ssid));
   delay(1000);
 }
 
@@ -384,8 +266,8 @@ void ReadSchedule()
     {
       break;
     }
-    Serial.println("schedule id from file = " + String(scheduleDoc["id"]));
-    scheduleArray[c].id = scheduleDoc["id"].as<long long>();
+    Serial.println("schedule id from file = " + String(scheduleDoc["id"].as<const char*>()));
+    scheduleArray[c].id = strtoll(scheduleDoc["id"].as<const char*>(), NULL, 10);
     Serial.println("schedule id in array = " + String(scheduleArray[c].id));
     scheduleArray[c].startTime = scheduleDoc["startTime"].as<time_t>() + gmt_offset;
     scheduleArray[c].duration = scheduleDoc["duration"].as<uint16_t>();
@@ -469,67 +351,6 @@ void InitRTC()
   delay(1000);
 }
 
-void SetAlarm()
-{
-  if (isScheduleArrayEmpty(scheduleArray) == true)
-  {
-    rtc.clearAlarm(1);
-    rtc.clearAlarm(2);
-    Serial.println("No Schedule, Alarm Cleared");
-  }
-  int ClosestScheduleIndex = GetClosestScheduleIndex();
-
-  // set start time to alarm2
-  DateTime startTime = DateTime(scheduleArray[ClosestScheduleIndex].startTime);
-  char buffer[] = "YYYY/MM/DD hh:mm:ss";
-  Serial.println(startTime.toString(buffer));
-  rtc.setAlarm2(startTime, DS3231_A2_Date);
-  delay(10);
-  rtc.clearAlarm(2);
-
-  SetAlarmDuration(ClosestScheduleIndex);
-}
-
-void SetAlarmDuration(int ClosestScheduleIndex)
-{
-  // set duration to alarm1
-  time_t finishTimeEpoch = scheduleArray[ClosestScheduleIndex].startTime + scheduleArray[ClosestScheduleIndex].duration;
-  DateTime finishTime = DateTime(finishTimeEpoch);
-  char buffer2[] = "YYYY/MM/DD hh:mm:ss";
-  Serial.println(finishTime.toString(buffer2));
-  rtc.setAlarm1(finishTime, DS3231_A1_Date);
-  delay(10);
-  rtc.clearAlarm(1);
-}
-
-void IRAM_ATTR onAlarmISR()
-{
-  if(digitalRead(sqw_pin) == LOW)
-  {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-    // important: eSetBits will append multiple bits into one atomic state (bitwise accumulation, ex: 0b0001 and 0b0010 sent back-to-back is the same as 0b0011 sent alone)
-    xTaskNotifyFromISR(ScheduleTaskHandle, ALARM_TRIGGERED, eSetBits, &xHigherPriorityTaskWoken); 
-  }
-}
-
-
-//==========================================================================================//
-
-
-// Device related functions
-void TurnOnDevice()
-{
-  digitalWrite(devicePin, HIGH);
-  deviceOn = true;
-}
-
-void TurnOffDevice()
-{
-  digitalWrite(devicePin, LOW);
-  deviceOn = false;
-} 
-
 
 //==========================================================================================//
 
@@ -555,16 +376,182 @@ int GetClosestScheduleIndex()
   return ClosestScheduleIndex;
 }
 
-bool isScheduleArrayEmpty(const Schedule* scheduleArray)
+void SetAlarmDuration(int ClosestScheduleIndex)
 {
-  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
+  // set duration to alarm1
+  time_t finishTimeEpoch = scheduleArray[ClosestScheduleIndex].startTime + scheduleArray[ClosestScheduleIndex].duration;
+  DateTime finishTime = DateTime(finishTimeEpoch);
+  char buffer2[] = "YYYY/MM/DD hh:mm:ss";
+  Serial.println(finishTime.toString(buffer2));
+  rtc.setAlarm1(finishTime, DS3231_A1_Date);
+  delay(10);
+  rtc.clearAlarm(1);
+}
+
+void SetAlarm()
+{
+  if (isScheduleArrayEmpty(scheduleArray) == true)
   {
-    if (scheduleArray[i].startTime != 0)
-    {
-      return false;
-    }
+    rtc.clearAlarm(1);
+    rtc.clearAlarm(2);
+    Serial.println("No Schedule, Alarm Cleared");
   }
-  return true;
+  int ClosestScheduleIndex = GetClosestScheduleIndex();
+
+  // set start time to alarm2
+  DateTime startTime = DateTime(scheduleArray[ClosestScheduleIndex].startTime);
+  char buffer[] = "YYYY/MM/DD hh:mm:ss";
+  Serial.println(startTime.toString(buffer));
+  rtc.setAlarm2(startTime, DS3231_A2_Date);
+  delay(10);
+  rtc.clearAlarm(2);
+
+  SetAlarmDuration(ClosestScheduleIndex);
+}
+
+// Decide what to do after schedule is done
+void AfterScheduleHandle(int ClosestScheduleIndex)
+{
+  RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
+  int interval = 0;
+  // 0 (minutes), 1 (hours), 2 (days)
+  switch (scheduleArray[ClosestScheduleIndex].intervalUnit)
+  {
+    case 0:
+      interval = scheduleArray[ClosestScheduleIndex].interval * 60;
+      break;
+    case 1:
+      interval = scheduleArray[ClosestScheduleIndex].interval * 3600;
+      break;
+    case 2:
+      interval = scheduleArray[ClosestScheduleIndex].interval * 24 * 3600;
+      break;
+    default:
+      break;
+  }
+  scheduleArray[ClosestScheduleIndex].startTime += interval;
+  // subtract gmt_offset before storing: ReadSchedule always adds it back, so the file
+  // must always contain the raw epoch (same format the web client originally sends)
+  Schedule toStore = scheduleArray[ClosestScheduleIndex];
+  toStore.startTime -= gmt_offset;
+  AddSchedule(toStore);
+}
+
+
+//==========================================================================================//
+
+
+// WebServer related functions
+void StoreSchedule(AsyncWebServerRequest* pRequest)
+{
+  Serial.println("Data received from website : " + String(receivedData));
+  File scheduleFile = LittleFS.open(schedule_file, "a");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule File Missing Or Can't Be Opened");
+    pRequest->send(404, "text/plain", "schedule file is missing!");
+    return;
+  }
+  scheduleFile.println(receivedData);
+  scheduleFile.close();
+
+  // confirmation
+  scheduleFile = LittleFS.open(schedule_file, "r");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule File Missing Or Can't Be Opened");
+    return;
+  }
+  Serial.println("FILE START (store)");
+  while (scheduleFile.available())
+  {
+    Serial.println(scheduleFile.readStringUntil('\n'));
+  }
+  Serial.println("FILE END (store)");
+  scheduleFile.close();
+  pRequest->send(200, "text/plain", "schedule is sent and stored!");
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
+}
+
+void DeleteSchedule(AsyncWebServerRequest* pRequest)
+{
+  
+  int status = RemoveSchedule(strtoll(receivedData, NULL, 10));
+  switch (status)
+  {
+    case -1:
+      pRequest->send(404, "text/plain", "file cant be opened!");
+      break;
+    default:
+      break;
+  }
+
+  // confirmation
+  File scheduleFile = LittleFS.open(schedule_file, "r");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule File Missing Or Can't Be Opened");
+    return;
+  }
+  Serial.println("FILE START (delete)");
+  while (scheduleFile.available())
+  {
+    Serial.println(scheduleFile.readStringUntil('\n'));
+  }
+  Serial.println("FILE END (delete)");
+  scheduleFile.close();
+  pRequest->send(200, "text/plain", "schedule is deleted!");
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
+}
+
+void InitWebServer()
+{
+  // GET / : client ask to display web page, esp32 respond by sending html file
+  webServer.on("/", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
+    if (!LittleFS.exists(web_file))
+    {
+      pRequest->send(404, "text/plain");
+      return; 
+    }
+    pRequest->send(LittleFS, web_file, "text/html");
+  });
+  // POST /upload : client send schedule data, esp32 respond with handlers to store it
+  webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveData); // onRequest run after data fully transferred, onUpload and onBody run during transfer
+  // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
+  webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
+    if (!LittleFS.exists(schedule_file))
+    {
+      pRequest->send(404, "application/json", "[]");
+      return;
+    }
+    pRequest->send(LittleFS, schedule_file, "text/plain");
+  });
+  // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
+  webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
+  events.onConnect([](AsyncEventSourceClient* client){
+    client->send(deviceOn ? "true" : "false", "status", millis(), 1000);
+  });
+  webServer.addHandler(&events);
+  webServer.begin();
+  Serial.println("IP Address : " + WiFi.localIP().toString());
+  delay(1000);
+}
+
+
+//==========================================================================================//
+
+
+void IRAM_ATTR onAlarmISR()
+{
+  if(digitalRead(sqw_pin) == LOW)
+  {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    // important: eSetBits will append multiple bits into one atomic state (bitwise accumulation, ex: 0b0001 and 0b0010 sent back-to-back is the same as 0b0011 sent alone)
+    xTaskNotifyFromISR(ScheduleTaskHandle, ALARM_TRIGGERED, eSetBits, &xHigherPriorityTaskWoken); 
+  }
 }
 
 // Handle RTC alarm setting and time keeping
@@ -628,26 +615,39 @@ void ScheduleTask(void* pvParams)
   }
 }
 
-// Decide what to do after schedule is done
-void AfterScheduleHandle(int ClosestScheduleIndex)
+
+//==========================================================================================//
+
+
+void setup() 
 {
-  RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
-  int interval;
-  // 0 (minutes), 1 (hours), 2 (days)
-  switch (scheduleArray[ClosestScheduleIndex].intervalUnit)
+  Serial.begin(115200);
+  InitWifi();
+  InitLittleFS();
+  InitNTP();
+  InitRTC();
+  InitWebServer();
+  pinMode(devicePin, OUTPUT);
+  pinMode(sqw_pin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(sqw_pin), onAlarmISR, FALLING);
+
+  requestQueue = xQueueCreate(1, sizeof(Request));
+  if (requestQueue == NULL)
   {
-    case 0:
-      interval = scheduleArray[ClosestScheduleIndex].interval * 60;
-      break;
-    case 1:
-      interval = scheduleArray[ClosestScheduleIndex].interval * 3600;
-      break;
-    case 2:
-      interval = scheduleArray[ClosestScheduleIndex].interval * 24 * 3600;
-      break;
-    default:
-      break;
+    Serial.println("Request Queue Failed!");
   }
-  scheduleArray[ClosestScheduleIndex].startTime += (scheduleArray[ClosestScheduleIndex].duration + interval);
-  AddSchedule(scheduleArray[ClosestScheduleIndex]);
+
+  xTaskCreatePinnedToCore(
+    ScheduleTask,
+    "Schedule Task",
+    4096,
+    NULL,
+    1,
+    &ScheduleTaskHandle,
+    1
+  );
+}
+
+void loop() 
+{ 
 }
