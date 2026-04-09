@@ -288,9 +288,9 @@
                 fetch("/delete", {
                     method: 'POST',
                     headers: {
-                        'content-type': 'application/json'
+                        'content-type': 'text/plain'
                     },
-                    body: JSON.stringify(scheduleId)
+                    body: scheduleId
                 }).catch(error => console.error("Error: ", error));
                 schedulePanel.remove();
             }
