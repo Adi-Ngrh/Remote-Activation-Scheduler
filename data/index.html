@@ -162,7 +162,7 @@
                     id: Math.floor(Date.now() / 1000).toString(),   // convert the current epoch from millisecond to second
                     startTime: epochTime.toString(),
                     duration: durationTotal.toString(),
-                    interval: scheduleForm.elements["input_interval"].value,
+                    interval: GetIntervalSecond(Number(scheduleForm.elements["input_interval"].value), scheduleForm.elements["input_interval_unit"].value).toString(),
                     intervalUnit: scheduleForm.elements["input_interval_unit"].value
                 };
 

@@ -413,23 +413,8 @@ void SetAlarm()
 void AfterScheduleHandle(int ClosestScheduleIndex)
 {
   RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
-  int interval = 0;
-  // 0 (minutes), 1 (hours), 2 (days)
-  switch (scheduleArray[ClosestScheduleIndex].intervalUnit)
-  {
-    case 0:
-      interval = scheduleArray[ClosestScheduleIndex].interval * 60;
-      break;
-    case 1:
-      interval = scheduleArray[ClosestScheduleIndex].interval * 3600;
-      break;
-    case 2:
-      interval = scheduleArray[ClosestScheduleIndex].interval * 24 * 3600;
-      break;
-    default:
-      break;
-  }
-  scheduleArray[ClosestScheduleIndex].startTime += interval;
+  // interval is already stored in seconds (converted by the web client before sending)
+  scheduleArray[ClosestScheduleIndex].startTime += scheduleArray[ClosestScheduleIndex].interval;
   // subtract gmt_offset before storing: ReadSchedule always adds it back, so the file
   // must always contain the raw epoch (same format the web client originally sends)
   Schedule toStore = scheduleArray[ClosestScheduleIndex];
