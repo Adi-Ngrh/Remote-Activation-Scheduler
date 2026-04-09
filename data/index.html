@@ -162,8 +162,7 @@
                     id: Math.floor(Date.now() / 1000).toString(),   // convert the current epoch from millisecond to second
                     startTime: epochTime.toString(),
                     duration: durationTotal.toString(),
-                    interval: GetIntervalSecond(Number(scheduleForm.elements["input_interval"].value), scheduleForm.elements["input_interval_unit"].value).toString(),
-                    intervalUnit: scheduleForm.elements["input_interval_unit"].value
+                    interval: GetIntervalSecond(Number(scheduleForm.elements["input_interval"].value), scheduleForm.elements["input_interval_unit"].value).toString()
                 };
 
                 // Schedule Validation
@@ -179,7 +178,7 @@
                 {
                     scheduleForm.elements["input_interval"].setCustomValidity("Interval Must Be Greater then 0");
                 }
-                if (Number(scheduleObj.duration) >= Number(GetIntervalSecond(scheduleObj.interval, scheduleObj.intervalUnit)))
+                if (Number(scheduleObj.duration) >= Number(scheduleObj.interval))
                 {
                     scheduleForm.elements["input_interval"].setCustomValidity("Interval Must Be Greater than Duration");
                 }
@@ -201,6 +200,16 @@
                 document.getElementById("input_duration_second").setCustomValidity("");
                 document.getElementById("input_interval").setCustomValidity("");
                 document.getElementById("input_time").setCustomValidity("");
+            }
+
+
+            function FormatInterval(totalSeconds)
+            {
+                totalSeconds = Number(totalSeconds);
+                if (totalSeconds >= 86400 && totalSeconds % 86400 === 0) return (totalSeconds / 86400) + " Days";
+                if (totalSeconds >= 3600 && totalSeconds % 3600 === 0) return (totalSeconds / 3600) + " Hours";
+                if (totalSeconds >= 60 && totalSeconds % 60 === 0) return (totalSeconds / 60) + " Minutes";
+                return totalSeconds + " Seconds";
             }
 
 
@@ -227,16 +236,10 @@
                 const minute = String(dateTime.getMinutes()).padStart(2, '0');
                 const time = `${hour}:${minute}`;
 
-                const intervalUnitMap = {
-                    "0": "Minutes",
-                    "1": "Hours",
-                    "2": "Days",
-                    "3": "Weeks"
-                }
                 clone.querySelector("#duration_placeholder").style.display = "block";
                 clone.querySelector("#interval_placeholder").style.display = "block";
                 clone.querySelector(".Duration").innerText = durationDay.toString() + " Days, " + durationHour.toString() + " Hours, " + durationMinute.toString() + " Minutes, " + durationSecond.toString() + " Seconds";
-                clone.querySelector(".Interval").innerText = scheduleObj.interval + " " + (intervalUnitMap[scheduleObj.intervalUnit] || "Unknown");
+                clone.querySelector(".Interval").innerText = FormatInterval(scheduleObj.interval);
                 clone.querySelector(".Date").innerText = date;
                 clone.querySelector(".Time").innerText = time;
                 clone.style.display = "block";

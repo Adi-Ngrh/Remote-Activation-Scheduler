@@ -37,7 +37,6 @@ struct Schedule{
   time_t startTime;
   uint16_t duration;
   uint16_t interval;
-  int intervalUnit;
 };
 
 struct Request{
@@ -124,7 +123,6 @@ void AddSchedule(Schedule s)
   doc["startTime"]    = String(s.startTime);
   doc["duration"]     = String(s.duration);
   doc["interval"]     = String(s.interval);
-  doc["intervalUnit"] = String(s.intervalUnit);
 
   File scheduleFile = LittleFS.open(schedule_file, "a");
   if (!scheduleFile)
@@ -272,7 +270,6 @@ void ReadSchedule()
     scheduleArray[c].startTime = scheduleDoc["startTime"].as<time_t>() + gmt_offset;
     scheduleArray[c].duration = scheduleDoc["duration"].as<uint16_t>();
     scheduleArray[c].interval = scheduleDoc["interval"].as<uint16_t>();
-    scheduleArray[c].intervalUnit = scheduleDoc["intervalUnit"].as<int>();
     c++;
   }
   scheduleFile.close();
