@@ -16,20 +16,10 @@ static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use o
 #define SCHEDULE_ARRAY_SIZE 50
 #define BUFFER_SIZE 200
 
-typedef enum{
-  EVENT_DEVICE_ON,
-  EVENT_DEVICE_OFF,
-  EVENT_DEVICE_FAIL,
-  EVENT_WIFI_DISCONNECT,
-  EVENT_NTP_FAIL,
-  EVENT_RTC_FAIL,
-  EVENT_ASK_STATE
-} event_enum;
 
 typedef enum{
-  NOTIFY_SCHEDULE_READ = 0b0001,
-  NOTIFY_SCHEDULE_SET_ALARM = 0b0010,
-  ALARM_TRIGGERED = 0b0100  // important: due to bitwise accumulation, make sure each value has unique bit that is set (ex: dont use 0b0011 when 0b0001 and 0b0010 exist)
+  NOTIFY_SCHEDULE_UPDATED = 0b0001,
+  ALARM_TRIGGERED = 0b0010  // important: due to bitwise accumulation, make sure each value has unique bit that is set (ex: dont use 0b0011 when 0b0001 and 0b0010 exist)
 } scheduleTask_enum;
 
 struct Schedule{
@@ -39,13 +29,7 @@ struct Schedule{
   uint16_t interval;
 };
 
-struct Request{
-  event_enum eventCategory;
-};
-
-TaskHandle_t StateManagerTaskHandle = NULL;
 TaskHandle_t ScheduleTaskHandle = NULL;
-QueueHandle_t requestQueue;
 Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
 // WiFi & website related variables
@@ -97,6 +81,8 @@ bool isScheduleArrayEmpty(const Schedule* scheduleArray)
 
 
 // Device related functions
+
+// Turn on device and notify web client by sending true through event source
 void TurnOnDevice()
 {
   digitalWrite(devicePin, HIGH);
@@ -104,6 +90,7 @@ void TurnOnDevice()
   events.send("true", "status", millis());
 }
 
+// Turn off device and notify web client by sending false through event source
 void TurnOffDevice()
 {
   digitalWrite(devicePin, LOW);
@@ -115,94 +102,9 @@ void TurnOffDevice()
 //==========================================================================================//
 
 
-// LittleFS schedule read/write functions
-void AddSchedule(Schedule s)
-{
-  JsonDocument doc;
-  doc["id"]           = String(s.id);
-  doc["startTime"]    = String(s.startTime);
-  doc["duration"]     = String(s.duration);
-  doc["interval"]     = String(s.interval);
+// Network related functions
 
-  File scheduleFile = LittleFS.open(schedule_file, "a");
-  if (!scheduleFile)
-  {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    return;
-  }
-  serializeJson(doc, scheduleFile);
-  scheduleFile.close();
-}
-
-int RemoveSchedule(long long idToDelete)
-{
-  File original = LittleFS.open(schedule_file, "r");
-  if (!original)
-  {
-    Serial.println("Schedule File Cant Be Opened!");
-    return -1;
-  }
-  File temp = LittleFS.open(temp_file, "w");
-  if (!temp)
-  {
-    Serial.println("Temp File Cant Be Opened!");
-    return -1;
-  }
-  while (original.available())
-  {
-    JsonDocument scheduleDoc;
-    DeserializationError error = deserializeJson(scheduleDoc, original);
-    if (error)
-    {
-      break;  
-    }
-    if (strtoll(scheduleDoc["id"].as<const char*>(), NULL, 10) != idToDelete)
-    {
-      String scheduleString;
-      serializeJson(scheduleDoc, scheduleString);
-      temp.println(scheduleString);
-    }
-  }
-  original.close();
-  temp.close();
-  LittleFS.remove(schedule_file);
-  LittleFS.rename(temp_file, schedule_file);
-  Serial.println("Schedule : " + String(idToDelete) + " successfully removed!");
-  return 0;
-}
-
-
-//==========================================================================================//
-
-
-// WebServer body handler
-void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total)
-{
-  if (total >= BUFFER_SIZE) {
-      Serial.println("Data from website is too large");
-      return; 
-  }
-  if (index == 0)
-  {
-    // make sure buffer is cleared
-    memset(receivedData, 0, BUFFER_SIZE);
-  }
-  if (index + len < BUFFER_SIZE)
-  {
-    memcpy(receivedData + index, pData, len);
-    if (index + len == total)
-    {
-      receivedData[total] = '\0';
-      Serial.println("Data chunk received : " + String(receivedData));
-    }
-  }
-}
-
-
-//==========================================================================================//
-
-
-// WiFi related functions
+// Initialize Wi-Fi connection
 void InitWifi()
 {
   WiFi.mode(WIFI_STA);
@@ -220,7 +122,9 @@ void InitWifi()
 //==========================================================================================//
 
 
-// LittleFS related functions
+// File system related functions
+
+// Initialize LittleFS
 void InitLittleFS()
 {
   while (!LittleFS.begin(false))  // do not immedietly format upon mounting fail
@@ -247,7 +151,66 @@ void InitLittleFS()
   delay(1000);
 }
 
-void ReadSchedule()
+// Add schedule to txt file
+void AddSchedule(JsonDocument& scheduleDoc)
+{
+  File scheduleFile = LittleFS.open(schedule_file, "a");
+  if (!scheduleFile)
+  {
+    Serial.println("Schedule File Missing Or Can't Be Opened");
+    return;
+  }
+  serializeJson(scheduleDoc, scheduleFile);
+  scheduleFile.close();
+}
+
+// Remove schedule from txt file
+int RemoveSchedule(long long idToDelete)
+{
+  File original = LittleFS.open(schedule_file, "r");
+  if (!original)
+  {
+    return -1;
+  }
+  File temp = LittleFS.open(temp_file, "w");
+  if (!temp)
+  {
+    return -2;
+  }
+
+  bool isThereMatch = false;
+  while (original.available())
+  {
+    JsonDocument scheduleDoc;
+    DeserializationError error = deserializeJson(scheduleDoc, original);
+    if (error)
+    {
+      break;  
+    }
+    if (strtoll(scheduleDoc["id"].as<const char*>(), NULL, 10) != idToDelete)
+    {
+      String scheduleString;
+      serializeJson(scheduleDoc, scheduleString);
+      temp.println(scheduleString);
+      isThereMatch = true;
+    }
+  }
+  original.close();
+  temp.close();
+  if (!isThereMatch)
+  {
+    LittleFS.remove(temp_file);
+    Serial.println("Schedule : " + String(idToDelete) + " not found!");
+    return 1;
+  }
+  LittleFS.remove(schedule_file);
+  LittleFS.rename(temp_file, schedule_file);
+  Serial.println("Schedule : " + String(idToDelete) + " successfully removed!");
+  return 0;
+}
+
+// Load schedule from txt file into scheduleArray and apply gmt_offset to startTime
+void LoadScheduleToArray()
 {
   int c = 0;
   memset(scheduleArray, 0, sizeof(scheduleArray));
@@ -280,6 +243,8 @@ void ReadSchedule()
 
 
 // NTP related functions
+
+// Initialize NTP connection
 void InitNTP()
 {
   configTime(gmt_offset, daylight_offset, ntp_server);
@@ -353,7 +318,6 @@ void InitRTC()
 
 
 // Utility Functions
-
 int GetClosestScheduleIndex()
 {
   if (isScheduleArrayEmpty(scheduleArray) == true)
@@ -412,11 +376,16 @@ void AfterScheduleHandle(int ClosestScheduleIndex)
   RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
   // interval is already stored in seconds (converted by the web client before sending)
   scheduleArray[ClosestScheduleIndex].startTime += scheduleArray[ClosestScheduleIndex].interval;
-  // subtract gmt_offset before storing: ReadSchedule always adds it back, so the file
+  // subtract gmt_offset before storing: LoadScheduleToArray always adds it back, so the file
   // must always contain the raw epoch (same format the web client originally sends)
   Schedule toStore = scheduleArray[ClosestScheduleIndex];
   toStore.startTime -= gmt_offset;
-  AddSchedule(toStore);
+  JsonDocument scheduleDoc;
+  scheduleDoc["id"] = String(toStore.id);
+  scheduleDoc["startTime"] = String(toStore.startTime);
+  scheduleDoc["duration"] = String(toStore.duration);
+  scheduleDoc["interval"] = String(toStore.interval);
+  AddSchedule(scheduleDoc);
 }
 
 
@@ -427,18 +396,18 @@ void AfterScheduleHandle(int ClosestScheduleIndex)
 void StoreSchedule(AsyncWebServerRequest* pRequest)
 {
   Serial.println("Data received from website : " + String(receivedData));
-  File scheduleFile = LittleFS.open(schedule_file, "a");
-  if (!scheduleFile)
+  JsonDocument scheduleDoc;
+  DeserializationError error = deserializeJson(scheduleDoc, receivedData);
+  if (error)
   {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    pRequest->send(404, "text/plain", "schedule file is missing!");
+    Serial.println("Failed To Parse Schedule Data");
+    pRequest->send(400, "text/plain", "failed to parse schedule data!");
     return;
   }
-  scheduleFile.println(receivedData);
-  scheduleFile.close();
+  AddSchedule(scheduleDoc);
 
   // confirmation
-  scheduleFile = LittleFS.open(schedule_file, "r");
+  File scheduleFile = LittleFS.open(schedule_file, "r");
   if (!scheduleFile)
   {
     Serial.println("Schedule File Missing Or Can't Be Opened");
@@ -452,8 +421,7 @@ void StoreSchedule(AsyncWebServerRequest* pRequest)
   Serial.println("FILE END (store)");
   scheduleFile.close();
   pRequest->send(200, "text/plain", "schedule is sent and stored!");
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_UPDATED, eSetBits);
 }
 
 void DeleteSchedule(AsyncWebServerRequest* pRequest)
@@ -484,8 +452,30 @@ void DeleteSchedule(AsyncWebServerRequest* pRequest)
   Serial.println("FILE END (delete)");
   scheduleFile.close();
   pRequest->send(200, "text/plain", "schedule is deleted!");
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_READ, eSetBits);
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_SET_ALARM, eSetBits);
+  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_UPDATED, eSetBits);
+}
+
+// WebServer body handler
+void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total)
+{
+  if (total >= BUFFER_SIZE) {
+      Serial.println("Data from website is too large");
+      return; 
+  }
+  if (index == 0)
+  {
+    // make sure buffer is cleared
+    memset(receivedData, 0, BUFFER_SIZE);
+  }
+  if (index + len < BUFFER_SIZE)
+  {
+    memcpy(receivedData + index, pData, len);
+    if (index + len == total)
+    {
+      receivedData[total] = '\0';
+      Serial.println("Data chunk received : " + String(receivedData));
+    }
+  }
 }
 
 void InitWebServer()
@@ -539,21 +529,20 @@ void IRAM_ATTR onAlarmISR()
 // Handle RTC alarm setting and time keeping
 void ScheduleTask(void* pvParams)
 {
+  // initial load and set alarm so system can work when restarted
+  LoadScheduleToArray();
+  SetAlarm();
+
   uint32_t notifValue;
   while(true)
   {
     if (xTaskNotifyWait(0x00, 0xFFFFFFFF, &notifValue, portMAX_DELAY) == pdPASS)
     {
-      if (notifValue & NOTIFY_SCHEDULE_READ) 
+      if (notifValue & NOTIFY_SCHEDULE_UPDATED) 
       {
-        ReadSchedule();
-        Serial.println("Read Schedules");
-      }
-      
-      if (notifValue & NOTIFY_SCHEDULE_SET_ALARM)
-      {
+        LoadScheduleToArray();
         SetAlarm();
-        Serial.println("Set Alarm");
+        Serial.println("Read Schedules");
       }
       
       if (notifValue & ALARM_TRIGGERED)
@@ -583,7 +572,7 @@ void ScheduleTask(void* pvParams)
             Serial.println("Device Turned Off");
             Serial.println(scheduleArray[ClosestScheduleIndex].id);
             AfterScheduleHandle(ClosestScheduleIndex);
-            ReadSchedule();
+            LoadScheduleToArray();
             SetAlarm();
           }
           else
@@ -612,12 +601,6 @@ void setup()
   pinMode(devicePin, OUTPUT);
   pinMode(sqw_pin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(sqw_pin), onAlarmISR, FALLING);
-
-  requestQueue = xQueueCreate(1, sizeof(Request));
-  if (requestQueue == NULL)
-  {
-    Serial.println("Request Queue Failed!");
-  }
 
   xTaskCreatePinnedToCore(
     ScheduleTask,
