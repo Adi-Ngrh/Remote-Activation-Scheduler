@@ -11,6 +11,7 @@
 #include "time.h"           //for connecting to NTP server
 #include "Wire.h"           // for I2C
 #include "RTClib.h"         // for interacting with RS3231
+#include "secrets.h"
 static_assert(__cplusplus >= 201703L, "C++17 not enabled"); // confirm the use of c++17
 
 #define SCHEDULE_ARRAY_SIZE 50
@@ -34,8 +35,8 @@ Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
 // WiFi & website related variables
 // ensure WiFi use 2,4 GHz and use WPA2 for compatibility
-const char* wifi_ssid = "punya orang";
-const char* wifi_password = "b57aigqs";
+const char* wifi_ssid = WIFI_SSID;
+const char* wifi_password = WIFI_PASSWORD;
 char receivedData[BUFFER_SIZE];
 AsyncWebServer webServer(80);
 AsyncEventSource events("/events");
