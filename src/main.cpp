@@ -397,10 +397,48 @@ void AfterScheduleHandle(int ClosestScheduleIndex)
 //==========================================================================================//
 
 
+// MQTT related functions
 static void MqttEventHandler(void* event_handler_args, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
+  esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
+  switch ((esp_mqtt_event_id_t)event_id)
+  {
+    case MQTT_EVENT_CONNECTED:
+      Serial.println("MQTT Connected");
+      esp_mqtt_client_subscribe(mqttClient, "ras/schedule/add", 1);
+      esp_mqtt_client_subscribe(mqttClient, "ras/schedule/delete", 1);
+      esp_mqtt_client_subscribe(mqttClient, "ras/schedule/get", 1);
+      break;
 
+    case MQTT_EVENT_DISCONNECTED:
+      Serial.println("MQTT Disconnected");
+      break;
+
+    case MQTT_EVENT_DATA:
+    {
+      if (event->data_len >= BUFFER_SIZE)
+      {
+        Serial.println("MQTT data too large");
+        break;
+      }
+      memcpy(receivedData, event->data, event->data_len);
+      receivedData[event->data_len] = '\0';
+      break;
+    }
+
+    case MQTT_EVENT_PUBLISHED:
+      Serial.println("MQTT Published msg_id=" + String(event->msg_id));
+      break;
+
+    case MQTT_EVENT_ERROR:
+      Serial.println("MQTT Error type=" + String(event->error_handle->error_type));
+      break;
+
+    default:
+      break;
+  }
 }
+
 void InitMqttClient()
 {
   esp_mqtt_client_config_t mqttConfig= {
