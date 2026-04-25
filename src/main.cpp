@@ -87,20 +87,20 @@ bool isScheduleArrayEmpty(const Schedule* scheduleArray)
 
 // Device related functions
 
-// Turn on device and notify web client by sending true through event source
+// Turn on device and notify client via MQTT
 void TurnOnDevice()
 {
   digitalWrite(devicePin, HIGH);
   deviceOn = true;
-  events.send("true", "status", millis());
+  esp_mqtt_client_publish(mqttClient, "ras/status", "true", 4, 1, 1);
 }
 
-// Turn off device and notify web client by sending false through event source
+// Turn off device and notify client via MQTT
 void TurnOffDevice()
 {
   digitalWrite(devicePin, LOW);
   deviceOn = false;
-  events.send("false", "status", millis());
+  esp_mqtt_client_publish(mqttClient, "ras/status", "false", 5, 1, 1);
 } 
 
 
@@ -423,6 +423,32 @@ static void MqttEventHandler(void* event_handler_args, esp_event_base_t event_ba
       }
       memcpy(receivedData, event->data, event->data_len);
       receivedData[event->data_len] = '\0';
+
+      if (strncmp(event->topic, "ras/schedule/add", event->topic_len) == 0)
+      {
+        JsonDocument scheduleDoc;
+        DeserializationError error = deserializeJson(scheduleDoc, receivedData);
+        if (!error)
+        {
+          AddSchedule(scheduleDoc);
+          xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_UPDATED, eSetBits);
+        }
+      }
+      else if (strncmp(event->topic, "ras/schedule/delete", event->topic_len) == 0)
+      {
+        RemoveSchedule(strtoll(receivedData, NULL, 10));
+        xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_UPDATED, eSetBits);
+      }
+      else if (strncmp(event->topic, "ras/schedule/get", event->topic_len) == 0)
+      {
+        File scheduleFile = LittleFS.open(schedule_file, "r");
+        if (scheduleFile)
+        {
+          String content = scheduleFile.readString();
+          scheduleFile.close();
+          esp_mqtt_client_publish(mqttClient, "ras/schedule/list", content.c_str(), content.length(), 1, 0);
+        }
+      }
       break;
     }
 
