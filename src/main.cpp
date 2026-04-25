@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "LittleFS.h"       // for using littleFS file system on esp32
 #include "WiFi.h"  
+#include "mqtt_client.h"
 #include "AsyncTCP.h"
 #include "ESPAsyncWebServer.h"
 #include "HTTPClient.h"
@@ -33,11 +34,14 @@ struct Schedule{
 TaskHandle_t ScheduleTaskHandle = NULL;
 Schedule scheduleArray[SCHEDULE_ARRAY_SIZE];
 
-// WiFi & website related variables
+// WiFi related variables
 // ensure WiFi use 2,4 GHz and use WPA2 for compatibility
 const char* wifi_ssid = WIFI_SSID;
 const char* wifi_password = WIFI_PASSWORD;
 char receivedData[BUFFER_SIZE];
+
+// MQTT related variables
+esp_mqtt_client_handle_t mqttClient;
 AsyncWebServer webServer(80);
 AsyncEventSource events("/events");
 HTTPClient http;
@@ -392,6 +396,22 @@ void AfterScheduleHandle(int ClosestScheduleIndex)
 
 //==========================================================================================//
 
+
+static void MqttEventHandler(void* event_handler_args, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+
+}
+void InitMqttClient()
+{
+  esp_mqtt_client_config_t mqttConfig= {
+    .uri = "mqtt://2026s1.tail1d3e4b.ts.net",
+    .username = "remote-activation-scheduler",
+    .password = "ras3735"
+  };
+  mqttClient = esp_mqtt_client_init(&mqttConfig);
+  esp_mqtt_client_register_event(mqttClient, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, MqttEventHandler, NULL);
+  esp_mqtt_client_start(mqttClient);
+}
 
 // WebServer related functions
 void StoreSchedule(AsyncWebServerRequest* pRequest)
