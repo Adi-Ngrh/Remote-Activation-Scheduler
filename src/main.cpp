@@ -477,125 +477,6 @@ void InitMqttClient()
   esp_mqtt_client_start(mqttClient);
 }
 
-// WebServer related functions
-void StoreSchedule(AsyncWebServerRequest* pRequest)
-{
-  Serial.println("Data received from website : " + String(receivedData));
-  JsonDocument scheduleDoc;
-  DeserializationError error = deserializeJson(scheduleDoc, receivedData);
-  if (error)
-  {
-    Serial.println("Failed To Parse Schedule Data");
-    pRequest->send(400, "text/plain", "failed to parse schedule data!");
-    return;
-  }
-  AddSchedule(scheduleDoc);
-
-  // confirmation
-  File scheduleFile = LittleFS.open(schedule_file, "r");
-  if (!scheduleFile)
-  {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    return;
-  }
-  Serial.println("FILE START (store)");
-  while (scheduleFile.available())
-  {
-    Serial.println(scheduleFile.readStringUntil('\n'));
-  }
-  Serial.println("FILE END (store)");
-  scheduleFile.close();
-  pRequest->send(200, "text/plain", "schedule is sent and stored!");
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_UPDATED, eSetBits);
-}
-
-void DeleteSchedule(AsyncWebServerRequest* pRequest)
-{
-  
-  int status = RemoveSchedule(strtoll(receivedData, NULL, 10));
-  switch (status)
-  {
-    case -1:
-      pRequest->send(404, "text/plain", "file cant be opened!");
-      break;
-    default:
-      break;
-  }
-
-  // confirmation
-  File scheduleFile = LittleFS.open(schedule_file, "r");
-  if (!scheduleFile)
-  {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    return;
-  }
-  Serial.println("FILE START (delete)");
-  while (scheduleFile.available())
-  {
-    Serial.println(scheduleFile.readStringUntil('\n'));
-  }
-  Serial.println("FILE END (delete)");
-  scheduleFile.close();
-  pRequest->send(200, "text/plain", "schedule is deleted!");
-  xTaskNotify(ScheduleTaskHandle, NOTIFY_SCHEDULE_UPDATED, eSetBits);
-}
-
-// WebServer body handler
-void ReceiveData(AsyncWebServerRequest* pRequest, const uint8_t* pData, size_t len, size_t index, size_t total)
-{
-  if (total >= BUFFER_SIZE) {
-      Serial.println("Data from website is too large");
-      return; 
-  }
-  if (index == 0)
-  {
-    // make sure buffer is cleared
-    memset(receivedData, 0, BUFFER_SIZE);
-  }
-  if (index + len < BUFFER_SIZE)
-  {
-    memcpy(receivedData + index, pData, len);
-    if (index + len == total)
-    {
-      receivedData[total] = '\0';
-      Serial.println("Data chunk received : " + String(receivedData));
-    }
-  }
-}
-
-void InitWebServer()
-{
-  // GET / : client ask to display web page, esp32 respond by sending html file
-  webServer.on("/", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists(web_file))
-    {
-      pRequest->send(404, "text/plain");
-      return; 
-    }
-    pRequest->send(LittleFS, web_file, "text/html");
-  });
-  // POST /upload : client send schedule data, esp32 respond with handlers to store it
-  webServer.on("/upload", HTTP_POST, StoreSchedule, NULL, ReceiveData); // onRequest run after data fully transferred, onUpload and onBody run during transfer
-  // GET /update : client ask to get all schedules, esp32 respond by sending schedult.txt
-  webServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* pRequest) {
-    if (!LittleFS.exists(schedule_file))
-    {
-      pRequest->send(404, "application/json", "[]");
-      return;
-    }
-    pRequest->send(LittleFS, schedule_file, "text/plain");
-  });
-  // POST /delete : client send schedule id to be deleted, esp32 delete that schedule and send confirmation
-  webServer.on("/delete", HTTP_POST, DeleteSchedule, NULL, ReceiveData);
-  events.onConnect([](AsyncEventSourceClient* client){
-    client->send(deviceOn ? "true" : "false", "status", millis(), 1000);
-  });
-  webServer.addHandler(&events);
-  webServer.begin();
-  Serial.println("IP Address : " + WiFi.localIP().toString());
-  delay(1000);
-}
-
 
 //==========================================================================================//
 
@@ -682,7 +563,7 @@ void setup()
   InitLittleFS();
   InitNTP();
   InitRTC();
-  InitWebServer();
+  InitMqttClient();
   pinMode(devicePin, OUTPUT);
   pinMode(sqw_pin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(sqw_pin), onAlarmISR, FALLING);
