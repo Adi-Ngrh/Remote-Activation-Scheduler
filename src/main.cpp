@@ -4,11 +4,7 @@
 #include "LittleFS.h"       // for using littleFS file system on esp32
 #include "WiFi.h"  
 #include "mqtt_client.h"
-#include "AsyncTCP.h"
-#include "ESPAsyncWebServer.h"
-#include "HTTPClient.h"
 #include "ArduinoJson.h"
-#include "AsyncJson.h"
 #include "time.h"           //for connecting to NTP server
 #include "Wire.h"           // for I2C
 #include "RTClib.h"         // for interacting with RS3231
@@ -42,9 +38,6 @@ char receivedData[BUFFER_SIZE];
 
 // MQTT related variables
 esp_mqtt_client_handle_t mqttClient;
-AsyncWebServer webServer(80);
-AsyncEventSource events("/events");
-HTTPClient http;
 
 // NTP related variables
 const char* ntp_server = "pool.ntp.org";
