@@ -311,8 +311,9 @@
 
             function InitWebSocket()
             {
-                ws = new WebSocket(`ws://${location.host}`);
-
+                // HTTPS site must use WSS
+                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${protocol}//${location.host}`);
                 ws.onopen = function() {
                     console.log("WebSocket Connected");
                     ReceiveSchedule();

@@ -1,87 +1,134 @@
 # Remote Activation Scheduler
 
-A scheduling system built on the ESP32-S3 microcontroller that allows users to remotely control when an external device turns on and off. Schedules are configured through a web-based control panel accessible from any browser on the same network.
+An IoT scheduling system that lets users remotely control when a physical device turns on and off. Schedules are managed through a web interface hosted on an Ubuntu server. The ESP32-S3 microcontroller receives commands over MQTT and directly drives the hardware output.
 
-## Overview
+## System Architecture
 
-This project addresses the need for precise, automated control of device activation over time. The user defines a schedule by specifying a **start date/time**, an **activation duration**, and a **repeat interval**. At the scheduled moment, the ESP32 switches the connected device on, keeps it running for the specified duration, then switches it off. If a repeat interval is set, the schedule automatically advances to the next occurrence.
+```
+Browser  ──HTTP/WebSocket──►  Ubuntu Server (Node.js)  ──MQTT/TLS──►  ESP32-S3  ──GPIO──►  Device
+                                      │                                    │
+                               (serves web UI,                      (stores schedules,
+                                bridges REST ↔ MQTT)                 controls RTC alarms)
+```
 
-Timekeeping is handled by a DS3231 real-time clock module, which maintains accurate time independently of the microcontroller. On startup, the RTC synchronises with an NTP time server over Wi-Fi, ensuring the clock stays correct even after power loss.
+Three components work together:
 
-## How It Works
+1. **ESP32-S3 firmware** — subscribes to MQTT topics, stores schedules in flash (LittleFS), sets DS3231 RTC alarms to trigger device activation/deactivation, and publishes device status back over MQTT.
+2. **Node.js backend** (`web/server.js`) — runs on the Ubuntu server. Bridges the browser and the ESP32: it exposes REST endpoints to the browser, translates those calls into MQTT publishes, and forwards incoming MQTT messages to the browser via WebSocket.
+3. **Web frontend** (`web/index.html`) — static HTML page served by the Node.js server. Users add/remove schedules and see live device status via WebSocket.
 
-1. The ESP32 hosts a local web page (the Control Panel) on its IP address.
-2. The user opens the page in a browser, fills in the schedule form, and submits it.
-3. The ESP32 stores the schedule in its internal file system (LittleFS) and programmes the RTC alarms accordingly.
-4. When the RTC alarm triggers at the scheduled start time, the device pin is driven HIGH (device turns on).
-5. A second alarm fires after the specified duration elapses, driving the pin LOW (device turns off).
-6. If a repeat interval was configured, the schedule is automatically rescheduled for the next interval.
+## How a Schedule Works
 
-Device status (ON/OFF) is pushed to the web page in real time via Server-Sent Events, so the indicator updates without refreshing the page.
+A schedule has four fields:
 
-## Hardware Requirements
+| Field | Type | Description |
+|---|---|---|
+| `id` | 64-bit integer (string) | Unique identifier |
+| `startTime` | Unix epoch (seconds) | When the device should turn on |
+| `duration` | uint16, seconds | How long the device stays on |
+| `interval` | uint16, seconds | Repeat interval; always ≥ 1 minute and must be greater than `duration` |
 
-| Component | Purpose |
-|---|---|
-| ESP32-S3 development board | Main controller, Wi-Fi, and web server |
-| DS3231 RTC module | Accurate timekeeping and alarm interrupts |
-| Relay module or MOSFET | Switching the target device on/off (connected to GPIO 16) |
+**Activation flow:**
+1. User submits a schedule in the browser → POST to `/schedule/add` on the Node.js server.
+2. Node.js forwards it as JSON to the MQTT topic `ras/schedule/add`.
+3. ESP32 receives it, appends it to `/schedule.txt` in LittleFS, then reprograms the DS3231 alarms.
+4. **RTC Alarm 2** fires at `startTime` → ESP32 drives GPIO 16 HIGH (device on), publishes `ras/status = true`.
+5. **RTC Alarm 1** fires at `startTime + duration` → GPIO 16 LOW (device off), publishes `ras/status = false`.
+6. The schedule is rescheduled for `startTime + interval` and saved back to flash, repeating indefinitely.
+7. The browser receives the status update over WebSocket and updates the UI instantly.
 
-The DS3231 communicates over I2C (SDA on GPIO 8, SCL on GPIO 9). The alarm interrupt output (SQW) is connected to GPIO 7.
+## Hardware
 
-## Software Dependencies
+| Component | Purpose | Pins |
+|---|---|---|
+| ESP32-S3 | Main controller, Wi-Fi, MQTT client | — |
+| DS3231 RTC | Accurate timekeeping and alarm interrupts | SDA=8, SCL=9, SQW=7 |
+| Relay or MOSFET | Switches the target device on/off | GPIO 16 |
 
-The project is built with [PlatformIO](https://platformio.org/) using the Arduino framework and C++17. The following libraries are required (managed automatically by PlatformIO):
+The DS3231 communicates over I2C. Its SQW interrupt pin is connected to GPIO 7 and triggers a hardware ISR that notifies the FreeRTOS scheduler task.
 
-- **RTClib** (Adafruit) — DS3231 driver
-- **ArduinoJson** (Benoît Blanchon) — JSON serialisation for schedule data
-- **ESPAsyncWebServer** — asynchronous HTTP server and Server-Sent Events
+On startup the ESP32 syncs the RTC time from NTP (`pool.ntp.org`) so the clock stays accurate after power loss.
 
 ## Project Structure
 
 ```
-src/main.cpp          Firmware source (Wi-Fi, RTC, web server, scheduling logic)
-data/index.html       Web interface — uploaded to ESP32 flash (LittleFS)
-data/schedule.txt     Persistent schedule storage on flash
-web/index.html        Web interface — intended for external server hosting
-platformio.ini        Build and dependency configuration
+src/main.cpp              ESP32 firmware (Wi-Fi, MQTT, RTC, scheduling logic)
+include/secrets.h         Wi-Fi credentials, MQTT broker URL, TLS certificate
+data/schedule.txt         Persistent schedule storage in LittleFS (newline-delimited JSON)
+web/server.js             Node.js backend — REST API + WebSocket + MQTT bridge
+web/index.html            Web frontend — schedule management UI
+web/package.json          Node.js dependencies
+platformio.ini            PlatformIO build configuration
 ```
 
-### Deployment Modes
+## MQTT Topics
 
-- **Self-hosted (current implementation):** The HTML file inside `data/` is uploaded to the ESP32's LittleFS partition. The ESP32 serves the page directly — no external server is needed. This is the default and fully functional mode.
+All communication between the Ubuntu server and the ESP32 goes through a TLS-secured MQTT broker (`mqtts://`, port 8883).
 
-- **Externally hosted (planned):** The HTML file inside `web/` is designed to be served from a separate web server (e.g., a Raspberry Pi or cloud instance). In this configuration, the ESP32 would only expose its REST API endpoints, while the front-end is loaded from an external host. This approach decouples the interface from the microcontroller and allows richer front-end tooling in the future.
+| Topic | Direction | Payload | Description |
+|---|---|---|---|
+| `ras/schedule/add` | Server → ESP32 | JSON schedule object | Add a new schedule |
+| `ras/schedule/delete` | Server → ESP32 | Schedule ID (string) | Remove a schedule by ID |
+| `ras/schedule/get` | Server → ESP32 | _(empty)_ | Request the full schedule list |
+| `ras/schedule/list` | ESP32 → Server | Newline-delimited JSON | Schedule list response |
+| `ras/status` | ESP32 → Server | `"true"` / `"false"` | Device on/off status (retained) |
 
-## Building and Flashing
+## Backend REST API
 
-1. Install [PlatformIO](https://platformio.org/install) (VS Code extension or CLI).
-2. Open the project folder in PlatformIO.
-3. Set your Wi-Fi credentials in `src/main.cpp` (`wifi_ssid` and `wifi_password`).
-4. Build and upload the firmware:
+The Node.js server (`web/server.js`) exposes these endpoints to the browser:
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| POST | `/schedule/add` | JSON schedule object | Forward add request to ESP32 via MQTT |
+| POST | `/schedule/delete` | Schedule ID (plain text) | Forward delete request to ESP32 via MQTT |
+| GET | `/schedule/get` | — | Ask ESP32 to publish its schedule list |
+
+Schedule list and device status are pushed to the browser over a persistent **WebSocket** connection. New clients receive the last known device status immediately on connect.
+
+## Setup
+
+### Firmware (ESP32)
+
+1. Install [PlatformIO](https://platformio.org/install).
+2. Fill in `include/secrets.h` with your Wi-Fi credentials, MQTT broker address, and TLS CA certificate.
+3. Set `gmt_offset` in `src/main.cpp` to your UTC offset in seconds (default is `25200` for GMT+7).
+4. Build and flash the firmware:
    ```
    pio run -t upload
    ```
-5. Upload the web interface to flash:
+5. Upload the LittleFS partition (schedule storage):
    ```
    pio run -t uploadfs
    ```
-6. Open the Serial Monitor at 115200 baud to verify initialisation and obtain the ESP32's IP address.
-7. Navigate to that IP address in a browser to access the Control Panel.
+6. Open the Serial Monitor at 115200 baud to verify startup and confirm Wi-Fi/MQTT connection.
 
-## API Endpoints
+### Backend Server (Ubuntu)
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/` | Serves the Control Panel web page |
-| GET | `/update` | Returns all stored schedules as newline-delimited JSON |
-| POST | `/upload` | Accepts a JSON schedule object and stores it |
-| POST | `/delete` | Accepts a schedule ID (plain text) and removes it |
-| SSE | `/events` | Pushes real-time device status (`true`/`false`) to connected clients |
+1. Install Node.js on the Ubuntu server.
+2. Copy the `web/` folder to the server.
+3. Create a `.env` file inside `web/` with the following variables:
+   ```
+   PORT=3000
+   MQTT_URL=mqtts://<broker-host>:8883
+   MQTT_USERNAME=<username>
+   MQTT_PASSWORD=<password>
+   ```
+4. Install dependencies and start the server:
+   ```
+   cd web
+   npm install
+   npm start
+   ```
+5. Open `http://<server-ip>:3000` in a browser to access the Control Panel.
 
-## Configuration
+## Key Implementation Details
 
-The firmware defaults to **GMT+7**. To change the timezone, modify the `gmt_offset` constant in `main.cpp` (value in seconds, e.g., 3600 × your UTC offset).
+- Schedules are stored in LittleFS as newline-delimited JSON objects (up to 50 schedules in memory at once).
+- Schedule IDs are 64-bit integers represented as strings to avoid the Year 2038 problem.
+- `startTime` is stored in flash as a raw UTC epoch. The `gmt_offset` is applied in memory only when loading into the schedule array.
+- The DS3231 uses two alarms simultaneously: Alarm 2 for the start event, Alarm 1 for the end (duration) event.
+- Alarm ISR and MQTT event handler both communicate with the `ScheduleTask` FreeRTOS task via `xTaskNotify` with bit flags (`NOTIFY_SCHEDULE_UPDATED`, `ALARM_TRIGGERED`), avoiding any blocking calls in interrupt/callback context.
+- The firmware is built with C++17 (enforced via `static_assert`).
 
 ## Author
 
