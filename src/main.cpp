@@ -461,9 +461,9 @@ static void MqttEventHandler(void* event_handler_args, esp_event_base_t event_ba
 void InitMqttClient()
 {
   esp_mqtt_client_config_t mqttConfig= {
-    .uri = "mqtt://2026s1.tail1d3e4b.ts.net",
-    .username = "remote-activation-scheduler",
-    .password = "ras3735"
+    .uri = MQTT_BROKER,
+    .username = MQTT_USERNAME,
+    .password = MQTT_PASSWORD
   };
   mqttClient = esp_mqtt_client_init(&mqttConfig);
   esp_mqtt_client_register_event(mqttClient, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, MqttEventHandler, NULL);

@@ -115,6 +115,9 @@
 
         <!-- Script Section (Javascript) -->
         <script>
+            let ws = null;
+
+
             function fixVh()    // fix mobile height issue : remove 100vh at overlay and use windows.innerHeight instead
             {
                 document.getElementById("overlay").style.height = window.innerHeight + "px";
@@ -135,6 +138,7 @@
                 document.getElementById("overlay").style.display = "none";
             }
 
+
             function GetIntervalSecond(interval, intervalUnit)
             {
                 const unitSecondMap = {
@@ -152,7 +156,7 @@
                 const date = scheduleForm.elements["input_date"].value;
                 const time = scheduleForm.elements["input_time"].value;
                 const dateTimeCombined = new Date(`${date}T${time}`);
-                const epochTime = Math.floor(dateTimeCombined.getTime() / 1000);    // getTime() use milisecond, turn it into second 
+                const epochTime = Math.floor(dateTimeCombined.getTime() / 1000);    // getTime() use milisecond, turn it into second
                 const days = Number(scheduleForm.elements["input_duration_day"].value);
                 const hours = Number(scheduleForm.elements["input_duration_hour"].value);
                 const minutes = Number(scheduleForm.elements["input_duration_minute"].value);
@@ -185,9 +189,9 @@
 
                 if(!scheduleForm.checkValidity())
                 {
-                    scheduleForm.reportValidity(); 
+                    scheduleForm.reportValidity();
                     return false;
-                } 
+                }
                 CloseOverlay();
                 SendSchedule(scheduleObj);
                 ReceiveSchedule();
@@ -250,63 +254,89 @@
             function SendSchedule(scheduleObj)
             {
                 console.log(scheduleObj.id);
-                fetch("/upload", {
-                    method: 'POST',
-                    headers: {
-                        'content-type': 'application/json'
-                    },
+                fetch("/schedule/add", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(scheduleObj)
-                }).catch(error => console.error("Error: ", error));
+                }).catch(error => console.error("Error:", error));
             }
 
 
             function ReceiveSchedule()
             {
-                fetch("/update").then(response => response.text()).then(scheduleData => {
-                    const splittedData = scheduleData.split("\n");
-                    const filteredData = splittedData.filter(data => data.trim() !== "");
-                    const scheduleArray = filteredData.map(data => {
-                        try {
-                            return JSON.parse(data);
-                        }
-                        catch (error) {
-                            console.error("Check:", data);
-                            return null;
-                        }
-                    })
-                    const container = document.getElementById("schedule_container");
-                    container.innerHTML = "";   // delete all schedule panels
-                    scheduleArray.forEach(schedule => {
-                        DisplaySchedule(schedule);
-                    })
-                });
+                fetch("/schedule/get").catch(error => console.error("Error:", error));
             }
 
 
             function DeleteSchedule(button)
             {
                 const schedulePanel = button.closest(".Schedule");
-                const scheduleId = button.closest(".Schedule").id;
+                const scheduleId = schedulePanel.id;
                 console.log("ID: ", scheduleId);
-                fetch("/delete", {
-                    method: 'POST',
-                    headers: {
-                        'content-type': 'text/plain'
-                    },
+                fetch("/schedule/delete", {
+                    method: "POST",
+                    headers: { "Content-Type": "text/plain" },
                     body: scheduleId
-                }).catch(error => console.error("Error: ", error));
+                }).catch(error => console.error("Error:", error));
                 schedulePanel.remove();
             }
 
 
-            document.addEventListener("DOMContentLoaded", function() {
-                ReceiveSchedule();
-                const eventSource = new EventSource("/events");
-                eventSource.addEventListener("status", function(e) {
-                    const isOn = e.data === "true";
+            function HandleMessage(topic, data)
+            {
+                if (topic === "ras/status")
+                {
+                    const isOn = data === "true";
                     document.getElementById("status_indicator").style.background = isOn ? "rgb(0,200,80)" : "rgb(200,50,50)";
                     document.getElementById("device_status").innerText = isOn ? "Device ON" : "Device OFF";
-                });
+                }
+                else if (topic === "ras/schedule/list")
+                {
+                    const splittedData = data.split("\n");
+                    const filteredData = splittedData.filter(d => d.trim() !== "");
+                    const scheduleArray = filteredData.map(d => {
+                        try {
+                            return JSON.parse(d);
+                        }
+                        catch (error) {
+                            console.error("Check:", d);
+                            return null;
+                        }
+                    }).filter(s => s !== null);
+                    const container = document.getElementById("schedule_container");
+                    container.innerHTML = "";   // delete all schedule panels
+                    scheduleArray.forEach(schedule => DisplaySchedule(schedule));
+                }
+            }
+
+
+            function InitWebSocket()
+            {
+                ws = new WebSocket(`ws://${location.host}`);
+
+                ws.onopen = function() {
+                    console.log("WebSocket Connected");
+                    ReceiveSchedule();
+                };
+
+                ws.onmessage = function(event) {
+                    const { topic, data } = JSON.parse(event.data);
+                    HandleMessage(topic, data);
+                };
+
+                ws.onclose = function() {
+                    console.warn("WebSocket Disconnected, reconnecting...");
+                    setTimeout(InitWebSocket, 3000);
+                };
+
+                ws.onerror = function(error) {
+                    console.error("WebSocket Error:", error);
+                };
+            }
+
+
+            document.addEventListener("DOMContentLoaded", function() {
+                InitWebSocket();
             });
         </script>
     </body>
