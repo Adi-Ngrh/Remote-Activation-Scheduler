@@ -193,8 +193,7 @@
                     return false;
                 }
                 CloseOverlay();
-                SendSchedule(scheduleObj);
-                ReceiveSchedule();
+                SendSchedule(scheduleObj).then(() => setTimeout(ReceiveSchedule, 300));
                 return false;
             }
 
@@ -254,7 +253,7 @@
             function SendSchedule(scheduleObj)
             {
                 console.log(scheduleObj.id);
-                fetch("/schedule/add", {
+                return fetch("/schedule/add", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(scheduleObj)

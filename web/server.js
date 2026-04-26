@@ -10,13 +10,14 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.json());
 app.use(express.text({ type: 'text/plain' }));
-app.use(express.static(path.join(__dirname, 'web')));
+app.use(express.static(__dirname));
 
 // Connect to MQTT broker using credentials from .env (never exposed to browser)
 const mqttClient = mqtt.connect(process.env.MQTT_URL, {
     username: process.env.MQTT_USERNAME,
     password: process.env.MQTT_PASSWORD,
-    clientId: 'ras-backend-' + Math.random().toString(16).slice(2)
+    clientId: 'ras-backend-' + Math.random().toString(16).slice(2),
+    rejectUnauthorized: false
 });
 
 // Cache last known device status so new WebSocket clients get it immediately
@@ -24,8 +25,8 @@ let lastStatus = null;
 
 mqttClient.on('connect', () => {
     console.log('MQTT Connected');
-    mqttClient.subscribe('ras/status');
-    mqttClient.subscribe('ras/schedule/list');
+    mqttClient.subscribe('ras/status', (err) => { if (err) console.error('Subscribe failed:', err); });
+    mqttClient.subscribe('ras/schedule/list', (err) => { if (err) console.error('Subscribe failed:', err); });
 });
 
 mqttClient.on('error', (err) => {

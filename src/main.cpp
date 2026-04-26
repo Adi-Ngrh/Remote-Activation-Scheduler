@@ -149,20 +149,21 @@ void InitLittleFS()
   delay(1000);
 }
 
-// Add schedule to txt file
-void AddSchedule(JsonDocument& scheduleDoc)
+// Add schedule to txt file (0 success, -1 schedule file open error)
+int AddSchedule(JsonDocument& scheduleDoc)
 {
   File scheduleFile = LittleFS.open(schedule_file, "a");
   if (!scheduleFile)
   {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
-    return;
+    return -1;
   }
   serializeJson(scheduleDoc, scheduleFile);
   scheduleFile.close();
+  Serial.println("Schedule : " + String(scheduleDoc["id"].as<const char*>()) + " successfully added!");
+  return 0;
 }
 
-// Remove schedule from txt file
+// Remove schedule from txt file (0 success, 1 schedule not found, -1 schedule file open error, -2 temp file open error)
 int RemoveSchedule(long long idToDelete)
 {
   File original = LittleFS.open(schedule_file, "r");
@@ -185,12 +186,15 @@ int RemoveSchedule(long long idToDelete)
     {
       break;  
     }
-    if (strtoll(scheduleDoc["id"].as<const char*>(), NULL, 10) != idToDelete)
+    if (strtoll(scheduleDoc["id"].as<const char*>(), NULL, 10) == idToDelete)
+    {
+      isThereMatch = true;
+    }
+    else
     {
       String scheduleString;
       serializeJson(scheduleDoc, scheduleString);
       temp.println(scheduleString);
-      isThereMatch = true;
     }
   }
   original.close();
@@ -208,14 +212,14 @@ int RemoveSchedule(long long idToDelete)
 }
 
 // Load schedule from txt file into scheduleArray and apply gmt_offset to startTime
-void LoadScheduleToArray()
+int LoadScheduleToArray()
 {
   int c = 0;
   memset(scheduleArray, 0, sizeof(scheduleArray));
   File scheduleFile = LittleFS.open(schedule_file, "r");
   if (!scheduleFile)
   {
-    Serial.println("Schedule File Missing Or Can't Be Opened");
+    return -1;
   }
   while (scheduleFile.available() && c < SCHEDULE_ARRAY_SIZE)
   {
@@ -234,6 +238,7 @@ void LoadScheduleToArray()
     c++;
   }
   scheduleFile.close();
+  return 0;
 }
 
 
@@ -371,7 +376,8 @@ void SetAlarm()
 // Decide what to do after schedule is done
 void AfterScheduleHandle(int ClosestScheduleIndex)
 {
-  RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
+  int removeStatus = RemoveSchedule(scheduleArray[ClosestScheduleIndex].id);
+  Serial.println("AfterScheduleHandle->RemoveSchedule status : " + String(removeStatus));
   // interval is already stored in seconds (converted by the web client before sending)
   scheduleArray[ClosestScheduleIndex].startTime += scheduleArray[ClosestScheduleIndex].interval;
   // subtract gmt_offset before storing: LoadScheduleToArray always adds it back, so the file
@@ -383,7 +389,8 @@ void AfterScheduleHandle(int ClosestScheduleIndex)
   scheduleDoc["startTime"] = String(toStore.startTime);
   scheduleDoc["duration"] = String(toStore.duration);
   scheduleDoc["interval"] = String(toStore.interval);
-  AddSchedule(scheduleDoc);
+  int addStatus = AddSchedule(scheduleDoc);
+  Serial.println("AfterScheduleHandle->AddSchedule status : " + String(addStatus));
 }
 
 
@@ -490,7 +497,8 @@ void IRAM_ATTR onAlarmISR()
 void ScheduleTask(void* pvParams)
 {
   // initial load and set alarm so system can work when restarted
-  LoadScheduleToArray();
+  int initialLoadStatus = LoadScheduleToArray();
+  Serial.println("Initial LoadScheduleToArray status : " + String(initialLoadStatus));
   SetAlarm();
 
   uint32_t notifValue;
@@ -500,7 +508,8 @@ void ScheduleTask(void* pvParams)
     {
       if (notifValue & NOTIFY_SCHEDULE_UPDATED) 
       {
-        LoadScheduleToArray();
+        int loadStatus = LoadScheduleToArray();
+        Serial.println("ScheduleTask->NOTIFY_SCHEDULE_UPDATED->LoadScheduleToArray status : " + String(loadStatus));
         SetAlarm();
         Serial.println("Read Schedules");
       }
@@ -532,7 +541,8 @@ void ScheduleTask(void* pvParams)
             Serial.println("Device Turned Off");
             Serial.println(scheduleArray[ClosestScheduleIndex].id);
             AfterScheduleHandle(ClosestScheduleIndex);
-            LoadScheduleToArray();
+            int loadStatus = LoadScheduleToArray();
+            Serial.println("ScheduleTask->ALARM_TRIGGERED->LoadScheduleToArray status : " + String(loadStatus));
             SetAlarm();
           }
           else
