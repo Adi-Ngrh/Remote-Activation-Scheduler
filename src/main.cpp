@@ -62,19 +62,6 @@ const uint8_t devicePin = 16;
 volatile bool deviceOn = false;
 
 
-bool isScheduleArrayEmpty(const Schedule* scheduleArray)
-{
-  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
-  {
-    if (scheduleArray[i].startTime != 0)
-    {
-      return false;
-    }
-  }
-  return true;
-}
-
-
 //==========================================================================================//
 
 
@@ -321,6 +308,18 @@ void InitRTC()
 
 
 // Utility Functions
+bool isScheduleArrayEmpty(const Schedule* scheduleArray)
+{
+  for (int i = 0; i < SCHEDULE_ARRAY_SIZE; i++)
+  {
+    if (scheduleArray[i].startTime != 0)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 int GetClosestScheduleIndex()
 {
   if (isScheduleArrayEmpty(scheduleArray) == true)
