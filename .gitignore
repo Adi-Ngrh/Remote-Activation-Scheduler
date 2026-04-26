@@ -6,4 +6,5 @@
 include/secrets.h
 test
 .env
+ca.crt
 node_modules/

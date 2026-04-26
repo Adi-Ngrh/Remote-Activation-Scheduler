@@ -463,7 +463,8 @@ void InitMqttClient()
   esp_mqtt_client_config_t mqttConfig= {
     .uri = MQTT_BROKER,
     .username = MQTT_USERNAME,
-    .password = MQTT_PASSWORD
+    .password = MQTT_PASSWORD,
+    .cert_pem = MQTT_CA_CERT
   };
   mqttClient = esp_mqtt_client_init(&mqttConfig);
   esp_mqtt_client_register_event(mqttClient, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, MqttEventHandler, NULL);
